@@ -64,7 +64,7 @@ struct SearchOverlayView: View {
 
                 HStack(spacing: 8) {
                     CuePaneStatusBadge(title: "\(appModel.filteredPresentations.count)개 결과", color: CuePaneChrome.accent)
-                    CuePaneStatusBadge(title: "\(appModel.anchorCount)개 앵커", color: CuePaneChrome.mint)
+                    CuePaneStatusBadge(title: "\(appModel.favoriteCount)개 즐겨찾기", color: CuePaneChrome.mint)
                 }
             }
         }
@@ -92,17 +92,58 @@ struct SearchOverlayView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
+            let favoriteIDs = Set(appModel.favoritePresentations.map(\.id))
+            let recentIDs = Set(appModel.recentPresentations.map(\.id))
+            let remainingPresentations = appModel.filteredPresentations.filter { presentation in
+                !favoriteIDs.contains(presentation.id) && !recentIDs.contains(presentation.id)
+            }
+
             CuePaneSurface(padding: 12) {
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(results) { presentation in
-                            AnchorRowView(presentation: presentation)
-                                .environmentObject(appModel)
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if appModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !appModel.favoritePresentations.isEmpty {
+                            sectionTitle("즐겨찾기")
+
+                            ForEach(appModel.favoritePresentations) { presentation in
+                                AnchorRowView(presentation: presentation)
+                                    .environmentObject(appModel)
+                            }
+
+                            if !appModel.recentPresentations.isEmpty {
+                                sectionTitle("최근 작업")
+                            }
+
+                            ForEach(appModel.recentPresentations) { presentation in
+                                AnchorRowView(presentation: presentation)
+                                    .environmentObject(appModel)
+                            }
+
+                            if !remainingPresentations.isEmpty {
+                                sectionTitle("전체 앵커")
+                            }
+
+                            ForEach(remainingPresentations) { presentation in
+                                AnchorRowView(presentation: presentation)
+                                    .environmentObject(appModel)
+                            }
+                        } else {
+                            ForEach(results) { presentation in
+                                AnchorRowView(presentation: presentation)
+                                    .environmentObject(appModel)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.top, 4)
     }
 }
 
@@ -115,11 +156,26 @@ private struct AnchorRowView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(presentation.record.name)
-                            .font(.headline)
+                        HStack(spacing: 8) {
+                            Text(presentation.record.name)
+                                .font(.headline)
+
+                            if presentation.record.isFavorite {
+                                Image(systemName: "star.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(CuePaneChrome.amber)
+                            }
+                        }
+
                         Text(presentation.subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        if !presentation.record.previewContextAppNames.isEmpty {
+                            Text(presentation.record.previewContextAppNames.prefix(3).joined(separator: " · "))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     Spacer(minLength: 0)
@@ -130,6 +186,7 @@ private struct AnchorRowView: View {
                 HStack(spacing: 10) {
                     metricChip(title: "문맥", value: "\(presentation.record.totalWindowCount)개")
                     metricChip(title: "매칭", value: "\(presentation.matchedCount)개")
+                    metricChip(title: "실행", value: "\(presentation.record.usageCount)회")
                     metricChip(title: "업데이트", value: presentation.record.updatedAt.formatted(date: .abbreviated, time: .shortened))
                 }
 
@@ -150,6 +207,22 @@ private struct AnchorRowView: View {
                     actionButton("업데이트", systemImage: "arrow.clockwise") {
                         appModel.updateContext(for: presentation.record)
                     }
+
+                    Button {
+                        appModel.beginRenaming(presentation.record)
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        appModel.toggleFavorite(presentation.record)
+                    } label: {
+                        Image(systemName: presentation.record.isFavorite ? "star.slash" : "star")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
 
                     Button(role: .destructive) {
                         appModel.delete(presentation.record)

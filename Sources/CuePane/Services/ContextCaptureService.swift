@@ -38,7 +38,8 @@ final class ContextCaptureService {
             contextWindows: contextSnapshots,
             updatedAt: Date(),
             lastUsedAt: nil,
-            usageCount: 0
+            usageCount: 0,
+            isFavorite: false
         )
     }
 

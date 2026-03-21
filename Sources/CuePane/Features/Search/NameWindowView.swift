@@ -18,9 +18,9 @@ struct NameWindowView: View {
                             .background(CuePaneChrome.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(appModel.editingExistingAnchor ? "앵커 이름 수정" : "현재 창 이름 붙이기")
+                            Text(appModel.namingTitle)
                                 .font(.title2.weight(.bold))
-                            Text("저장 시 같은 모니터의 작업 문맥을 함께 기록합니다.")
+                            Text(appModel.namingSubtitle)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -30,7 +30,10 @@ struct NameWindowView: View {
                         Text(appModel.namingTargetDescription)
                             .font(.subheadline.weight(.medium))
                         HStack(spacing: 8) {
-                            CuePaneStatusBadge(title: "\(appModel.namingPreviewCount)개 창 저장 예정", color: CuePaneChrome.mint)
+                            CuePaneStatusBadge(
+                                title: appModel.namingBadgeText,
+                                color: appModel.namingCapturesContext ? CuePaneChrome.mint : CuePaneChrome.accent
+                            )
                         }
                     }
 
@@ -50,7 +53,7 @@ struct NameWindowView: View {
 
                         Spacer(minLength: 0)
 
-                        Button(appModel.editingExistingAnchor ? "업데이트" : "저장") {
+                        Button(appModel.namingSaveButtonTitle) {
                             appModel.saveNamingDraft()
                         }
                         .buttonStyle(.borderedProminent)

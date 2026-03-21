@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -14,6 +15,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var namingTargetDescription = ""
     @Published private(set) var namingPreviewCount = 0
     @Published private(set) var editingExistingAnchor = false
+    @Published private(set) var namingCapturesContext = true
     @Published var preferences: CuePanePreferences {
         didSet {
             persistPreferences()
@@ -114,6 +116,46 @@ final class AppModel: ObservableObject {
         anchors.count
     }
 
+    var favoriteCount: Int {
+        anchors.filter(\.isFavorite).count
+    }
+
+    var favoritePresentations: [AnchorPresentation] {
+        presentations.filter { $0.record.isFavorite }
+    }
+
+    var recentPresentations: [AnchorPresentation] {
+        Array(presentations.filter { !$0.record.isFavorite }.prefix(5))
+    }
+
+    var lastUsedPresentation: AnchorPresentation? {
+        presentations.first(where: { $0.record.lastUsedAt != nil })
+    }
+
+    var namingTitle: String {
+        if editingExistingAnchor {
+            return namingCapturesContext ? "앵커 이름 수정" : "저장된 앵커 이름 수정"
+        }
+        return "현재 창 이름 붙이기"
+    }
+
+    var namingSubtitle: String {
+        namingCapturesContext
+            ? "저장 시 같은 모니터의 작업 문맥을 함께 기록합니다."
+            : "이미 저장된 앵커의 이름만 바꿉니다."
+    }
+
+    var namingBadgeText: String {
+        namingCapturesContext ? "\(namingPreviewCount)개 창 저장 예정" : "문맥은 유지"
+    }
+
+    var namingSaveButtonTitle: String {
+        if editingExistingAnchor {
+            return namingCapturesContext ? "업데이트" : "이름 저장"
+        }
+        return "저장"
+    }
+
     var filteredPresentations: [AnchorPresentation] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let base = presentations
@@ -147,15 +189,12 @@ final class AppModel: ObservableObject {
                 }
 
                 score += presentation.anchorLive ? 8 : 0
+                score += presentation.record.isFavorite ? 12 : 0
                 score += presentation.matchedCount
                 return (presentation, score)
             }
             .sorted { lhs, rhs in lhs.1 > rhs.1 }
             .map(\.0)
-    }
-
-    var recentPresentations: [AnchorPresentation] {
-        Array(presentations.prefix(5))
     }
 
     func requestAccessibility() {
@@ -179,6 +218,15 @@ final class AppModel: ObservableObject {
 
     func dismissSearch() {
         dismissSearchAction?()
+    }
+
+    func recallLastUsed() {
+        guard let presentation = lastUsedPresentation else {
+            lastActionSummary = "다시 열 최근 작업이 없습니다"
+            return
+        }
+
+        recall(presentation.record, mode: .context, destination: .originalDisplay)
     }
 
     func beginNamingCurrentWindow() {
@@ -208,9 +256,21 @@ final class AppModel: ObservableObject {
         namingTargetSnapshot = targetSnapshot
         namingAnchorID = matchedRecord?.id
         editingExistingAnchor = namingAnchorID != nil
+        namingCapturesContext = true
         namingDraft = matchedRecord?.name ?? suggestedName(for: focusedWindow)
         namingTargetDescription = summary(for: focusedWindow)
         namingPreviewCount = max(1, liveWindows(on: focusedWindow.displayID, topology: topology).count)
+        showNamingAction?()
+    }
+
+    func beginRenaming(_ record: AnchorRecord) {
+        namingTargetSnapshot = nil
+        namingAnchorID = record.id
+        editingExistingAnchor = true
+        namingCapturesContext = false
+        namingDraft = record.name
+        namingTargetDescription = summary(for: record.anchorWindow)
+        namingPreviewCount = record.totalWindowCount
         showNamingAction?()
     }
 
@@ -218,19 +278,35 @@ final class AppModel: ObservableObject {
         namingTargetSnapshot = nil
         namingAnchorID = nil
         editingExistingAnchor = false
+        namingCapturesContext = true
         dismissNamingAction?()
     }
 
     func saveNamingDraft() {
-        let topology = DisplayTopology.current()
-        guard let liveNamingTarget = resolveNamingTargetWindow(topology: topology) else {
-            lastActionSummary = "저장할 윈도우가 없습니다"
-            return
-        }
-
         let trimmedName = namingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             lastActionSummary = "이름을 입력해야 합니다"
+            return
+        }
+
+        if !namingCapturesContext {
+            guard let namingAnchorID, let index = anchors.firstIndex(where: { $0.id == namingAnchorID }) else {
+                lastActionSummary = "이름을 수정할 앵커를 찾지 못했습니다"
+                return
+            }
+
+            anchors[index].name = trimmedName
+            anchors[index].updatedAt = Date()
+            persistAnchors()
+            refreshCatalogSnapshot()
+            lastActionSummary = "\(trimmedName) · 앵커 이름을 수정했습니다"
+            dismissNaming()
+            return
+        }
+
+        let topology = DisplayTopology.current()
+        guard let liveNamingTarget = resolveNamingTargetWindow(topology: topology) else {
+            lastActionSummary = "저장할 윈도우가 없습니다"
             return
         }
 
@@ -249,6 +325,7 @@ final class AppModel: ObservableObject {
         if let previous = anchors.first(where: { $0.id == captured.id }) {
             finalRecord.lastUsedAt = previous.lastUsedAt
             finalRecord.usageCount = previous.usageCount
+            finalRecord.isFavorite = previous.isFavorite
         }
 
         upsert(finalRecord)
@@ -326,10 +403,27 @@ final class AppModel: ObservableObject {
         var updatedRecord = captured
         updatedRecord.lastUsedAt = record.lastUsedAt
         updatedRecord.usageCount = record.usageCount
+        updatedRecord.isFavorite = record.isFavorite
         upsert(updatedRecord)
         persistAnchors()
         refreshCatalogSnapshot()
         lastActionSummary = "\(record.name) · 문맥을 현재 상태로 업데이트했습니다"
+    }
+
+    func toggleFavorite(_ record: AnchorRecord) {
+        guard let index = anchors.firstIndex(where: { $0.id == record.id }) else {
+            return
+        }
+
+        let isFavorite = !anchors[index].isFavorite
+        anchors[index].isFavorite = isFavorite
+        anchors[index].updatedAt = Date()
+        anchors = sortedAnchors(anchors)
+        persistAnchors()
+        refreshCatalogSnapshot()
+        lastActionSummary = isFavorite
+            ? "\(record.name) · 즐겨찾기에 고정했습니다"
+            : "\(record.name) · 즐겨찾기에서 해제했습니다"
     }
 
     func delete(_ record: AnchorRecord) {
@@ -337,6 +431,45 @@ final class AppModel: ObservableObject {
         persistAnchors()
         refreshCatalogSnapshot()
         lastActionSummary = "\(record.name) 앵커를 삭제했습니다"
+    }
+
+    func exportAnchors() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "CuePane-anchors.json"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            try anchorStore.exportAnchors(anchors, to: url)
+            lastActionSummary = "앵커 \(anchors.count)개를 내보냈습니다"
+        } catch {
+            lastActionSummary = "내보내기 실패: \(error.localizedDescription)"
+        }
+    }
+
+    func importAnchors() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let imported = try anchorStore.importAnchors(from: url)
+            let mergedCount = mergeImportedAnchors(imported)
+            persistAnchors()
+            refreshCatalogSnapshot()
+            lastActionSummary = "앵커 \(mergedCount)개를 가져왔습니다"
+        } catch {
+            lastActionSummary = "가져오기 실패: \(error.localizedDescription)"
+        }
     }
 
     func openOnboarding() {
@@ -404,6 +537,11 @@ final class AppModel: ObservableObject {
         return "\(liveWindow.appName) · \(title)"
     }
 
+    private func summary(for snapshot: WindowSnapshot) -> String {
+        let title = snapshot.title.isEmpty ? "제목 없음" : snapshot.title
+        return "\(snapshot.appName) · \(title)"
+    }
+
     private func upsert(_ record: AnchorRecord) {
         if let index = anchors.firstIndex(where: { $0.id == record.id }) {
             anchors[index] = record
@@ -428,8 +566,40 @@ final class AppModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    private func mergeImportedAnchors(_ importedAnchors: [AnchorRecord]) -> Int {
+        var mergedCount = 0
+
+        for imported in importedAnchors {
+            if let index = anchors.firstIndex(where: { $0.id == imported.id }) {
+                anchors[index] = imported
+                mergedCount += 1
+                continue
+            }
+
+            if let index = anchors.firstIndex(where: {
+                $0.name == imported.name &&
+                $0.anchorWindow.bundleIdentifier == imported.anchorWindow.bundleIdentifier &&
+                $0.anchorWindow.normalizedTitle == imported.anchorWindow.normalizedTitle
+            }) {
+                anchors[index] = imported
+                mergedCount += 1
+                continue
+            }
+
+            anchors.append(imported)
+            mergedCount += 1
+        }
+
+        anchors = sortedAnchors(anchors)
+        return mergedCount
+    }
+
     private func sortedAnchors(_ records: [AnchorRecord]) -> [AnchorRecord] {
         records.sorted { lhs, rhs in
+            if lhs.isFavorite != rhs.isFavorite {
+                return lhs.isFavorite && !rhs.isFavorite
+            }
             if lhs.lastUsedAt == rhs.lastUsedAt {
                 return lhs.updatedAt > rhs.updatedAt
             }
@@ -439,6 +609,9 @@ final class AppModel: ObservableObject {
 
     private func sortedPresentations(_ presentations: [AnchorPresentation]) -> [AnchorPresentation] {
         presentations.sorted { lhs, rhs in
+            if lhs.record.isFavorite != rhs.record.isFavorite {
+                return lhs.record.isFavorite && !rhs.record.isFavorite
+            }
             if lhs.record.lastUsedAt == rhs.record.lastUsedAt {
                 return lhs.record.updatedAt > rhs.record.updatedAt
             }
