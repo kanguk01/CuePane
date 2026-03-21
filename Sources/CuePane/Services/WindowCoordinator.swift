@@ -74,8 +74,14 @@ final class WindowCoordinator {
             window.contentViewController = NSHostingController(rootView: content)
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
             window.isMovableByWindowBackground = true
             window.level = .floating
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = true
+            window.toolbarStyle = .unifiedCompact
+            window.animationBehavior = .utilityWindow
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             controller = NSWindowController(window: window)
             windows[id] = controller

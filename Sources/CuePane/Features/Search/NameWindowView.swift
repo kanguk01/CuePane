@@ -5,51 +5,62 @@ struct NameWindowView: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(appModel.editingExistingAnchor ? "앵커 이름 수정" : "현재 창 이름 붙이기")
-                .font(.title2.weight(.bold))
+        ZStack {
+            CuePaneWindowBackground()
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(appModel.namingTargetDescription)
-                    .font(.subheadline.weight(.medium))
-                Text("저장 시 같은 모니터의 \(appModel.namingPreviewCount)개 창을 함께 기록합니다.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            CuePaneSurface(padding: 20) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "tag.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(CuePaneChrome.accent)
+                            .frame(width: 36, height: 36)
+                            .background(CuePaneChrome.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            TextField("앵커 이름", text: $appModel.namingDraft)
-                .textFieldStyle(.roundedBorder)
-                .focused($isFocused)
-                .onSubmit {
-                    appModel.saveNamingDraft()
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(appModel.editingExistingAnchor ? "앵커 이름 수정" : "현재 창 이름 붙이기")
+                                .font(.title2.weight(.bold))
+                            Text("저장 시 같은 모니터의 작업 문맥을 함께 기록합니다.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(appModel.namingTargetDescription)
+                            .font(.subheadline.weight(.medium))
+                        HStack(spacing: 8) {
+                            CuePaneStatusBadge(title: "\(appModel.namingPreviewCount)개 창 저장 예정", color: CuePaneChrome.mint)
+                        }
+                    }
+
+                    TextField("앵커 이름", text: $appModel.namingDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.title3)
+                        .focused($isFocused)
+                        .onSubmit {
+                            appModel.saveNamingDraft()
+                        }
+
+                    HStack {
+                        Button("취소") {
+                            appModel.dismissNaming()
+                        }
+                        .buttonStyle(.bordered)
+
+                        Spacer(minLength: 0)
+
+                        Button(appModel.editingExistingAnchor ? "업데이트" : "저장") {
+                            appModel.saveNamingDraft()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(CuePaneChrome.accent)
+                    }
                 }
-
-            HStack {
-                Button("취소") {
-                    appModel.dismissNaming()
-                }
-                .buttonStyle(.bordered)
-
-                Spacer(minLength: 0)
-
-                Button(appModel.editingExistingAnchor ? "업데이트" : "저장") {
-                    appModel.saveNamingDraft()
-                }
-                .buttonStyle(.borderedProminent)
             }
         }
-        .padding(22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.97, green: 0.98, blue: 0.99),
-                    Color(red: 0.93, green: 0.96, blue: 0.98),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
+        .padding(22)
         .onAppear {
             isFocused = true
         }
