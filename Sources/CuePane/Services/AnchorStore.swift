@@ -42,11 +42,18 @@ final class AnchorStore {
 
     func saveAnchors(_ anchors: [AnchorRecord]) throws {
         try ensureDirectory()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(anchors)
+        let data = try encoder().encode(anchors)
         try data.write(to: anchorsURL, options: .atomic)
+    }
+
+    func exportAnchors(_ anchors: [AnchorRecord], to url: URL) throws {
+        let data = try encoder().encode(anchors)
+        try data.write(to: url, options: .atomic)
+    }
+
+    func importAnchors(from url: URL) throws -> [AnchorRecord] {
+        let data = try Data(contentsOf: url)
+        return try decoder().decode([AnchorRecord].self, from: data)
     }
 
     func openStorageDirectory() {
@@ -75,5 +82,18 @@ final class AnchorStore {
 
     private func ensureDirectory() throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    }
+
+    private func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }

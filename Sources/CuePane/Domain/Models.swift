@@ -196,9 +196,54 @@ struct AnchorRecord: Codable, Hashable, Identifiable {
     var updatedAt: Date
     var lastUsedAt: Date?
     var usageCount: Int
+    var isFavorite: Bool
 
     var totalWindowCount: Int {
         1 + contextWindows.count
+    }
+
+    var previewContextAppNames: [String] {
+        var seen = Set<String>()
+        return contextWindows.compactMap { snapshot in
+            guard seen.insert(snapshot.appName).inserted else {
+                return nil
+            }
+            return snapshot.appName
+        }
+    }
+
+    init(
+        id: UUID,
+        name: String,
+        anchorWindow: WindowSnapshot,
+        contextWindows: [WindowSnapshot],
+        updatedAt: Date,
+        lastUsedAt: Date?,
+        usageCount: Int,
+        isFavorite: Bool
+    ) {
+        self.id = id
+        self.name = name
+        self.anchorWindow = anchorWindow
+        self.contextWindows = contextWindows
+        self.updatedAt = updatedAt
+        self.lastUsedAt = lastUsedAt
+        self.usageCount = usageCount
+        self.isFavorite = isFavorite
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            anchorWindow: try container.decode(WindowSnapshot.self, forKey: .anchorWindow),
+            contextWindows: try container.decode([WindowSnapshot].self, forKey: .contextWindows),
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt),
+            lastUsedAt: try container.decodeIfPresent(Date.self, forKey: .lastUsedAt),
+            usageCount: try container.decodeIfPresent(Int.self, forKey: .usageCount) ?? 0,
+            isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        )
     }
 }
 

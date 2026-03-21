@@ -10,6 +10,7 @@ struct MenuBarContentView: View {
                 permissionBanner
                 statusSection
                 primaryActions
+                favoriteAnchorsSection
                 recentAnchorsSection
                 footerActions
             }
@@ -85,6 +86,7 @@ struct MenuBarContentView: View {
                 HStack(spacing: 12) {
                     CuePaneMetricTile(label: "보이는 창", value: "\(appModel.liveWindowCount)")
                     CuePaneMetricTile(label: "앵커", value: "\(appModel.anchorCount)")
+                    CuePaneMetricTile(label: "즐겨찾기", value: "\(appModel.favoriteCount)")
                 }
 
                 Divider()
@@ -124,6 +126,61 @@ struct MenuBarContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+
+                if let lastUsed = appModel.lastUsedPresentation {
+                    Button {
+                        appModel.recallLastUsed()
+                    } label: {
+                        Label("최근 작업 다시 열기", systemImage: "clock.arrow.circlepath")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Text(lastUsed.record.name)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var favoriteAnchorsSection: some View {
+        if !appModel.favoritePresentations.isEmpty {
+            CuePaneSurface {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("즐겨찾기")
+                        .font(.headline)
+
+                    ForEach(appModel.favoritePresentations.prefix(4)) { presentation in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(presentation.record.name)
+                                        .font(.subheadline.weight(.semibold))
+                                    Image(systemName: "star.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(CuePaneChrome.amber)
+                                }
+                                Text("\(presentation.record.totalWindowCount)개 창 · \(presentation.statusLabel)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            Button("열기") {
+                                appModel.recall(presentation, mode: .context, destination: .originalDisplay)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+
+                        if presentation.id != appModel.favoritePresentations.prefix(4).last?.id {
+                            Divider()
+                        }
+                    }
+                }
             }
         }
     }
@@ -173,6 +230,18 @@ struct MenuBarContentView: View {
                 }
 
                 HStack(spacing: 8) {
+                    Button("내보내기") {
+                        appModel.exportAnchors()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("가져오기") {
+                        appModel.importAnchors()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
                     Button("저장소") {
                         appModel.openStorageDirectory()
                     }
