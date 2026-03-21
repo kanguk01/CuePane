@@ -15,8 +15,8 @@ struct OnboardingView: View {
         .background(
             LinearGradient(
                 colors: [
-                    Color(red: 0.06, green: 0.09, blue: 0.16),
-                    Color(red: 0.09, green: 0.18, blue: 0.29),
+                    Color(red: 0.08, green: 0.11, blue: 0.18),
+                    Color(red: 0.11, green: 0.20, blue: 0.31),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -30,7 +30,7 @@ struct OnboardingView: View {
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
-            Text("모니터를 뽑았다가 다시 연결해도 창이 원래 작업 배치로 돌아오게 만드는 앱입니다.")
+            Text("이름 붙인 창 하나에 현재 모니터의 작업 문맥을 매달아 두고, 나중에 검색해서 다시 부르는 앱입니다.")
                 .font(.title3.weight(.medium))
                 .foregroundStyle(Color.white.opacity(0.88))
 
@@ -40,7 +40,7 @@ struct OnboardingView: View {
                     color: appModel.accessibilityGranted ? .green : .orange
                 )
                 statusChip(
-                    title: appModel.preferences.autoRestoreEnabled ? "자동 복원 켜짐" : "자동 복원 꺼짐",
+                    title: "\(appModel.anchorCount)개 앵커 저장됨",
                     color: .cyan
                 )
             }
@@ -52,19 +52,19 @@ struct OnboardingView: View {
             onboardingCard(
                 index: "1",
                 title: "손쉬운 사용 권한",
-                body: "CuePane가 창 위치를 읽고 옮기려면 macOS 손쉬운 사용 권한이 필요합니다.",
+                body: "CuePane가 현재 창을 읽고 앞으로 가져오려면 macOS 손쉬운 사용 권한이 필요합니다.",
                 accent: .orange
             )
             onboardingCard(
                 index: "2",
-                title: "현재 레이아웃 저장",
-                body: "원하는 배치를 맞춘 뒤 `지금 저장`을 누르거나 자동 저장을 켜 두면 현재 화면 조합의 프로필이 만들어집니다.",
+                title: "현재 창 이름 붙이기",
+                body: "예를 들어 터미널 창에 '서버로그' 같은 이름을 붙이면, 같은 모니터에 보이는 Slack 같은 보조 창도 함께 저장됩니다.",
                 accent: .cyan
             )
             onboardingCard(
                 index: "3",
-                title: "연결 변경 시 자동 복원",
-                body: "노트북 단독/외부 모니터 조합이 바뀌면 CuePane가 해당 토폴로지 저장본으로 창을 되돌립니다.",
+                title: "검색 후 복원",
+                body: "⌘⇧Space로 검색창을 열고 이름을 치면 문맥 전체, 창만, 현재 디스플레이로 가져오기를 바로 실행할 수 있습니다.",
                 accent: .mint
             )
         }
@@ -84,25 +84,25 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Button("진단 창") {
-                    appModel.openDiagnosticsWindow()
+                Button("검색 열기") {
+                    appModel.openSearch()
                 }
                 .buttonStyle(.bordered)
             }
 
             HStack(spacing: 10) {
-                Button("지금 저장") {
-                    appModel.captureNow(reason: "온보딩 저장")
+                Button("현재 창 이름 붙이기") {
+                    appModel.beginNamingCurrentWindow()
                 }
                 .buttonStyle(.bordered)
 
-                Button("지금 복원") {
-                    appModel.restoreCurrentTopology(reason: "온보딩 복원")
+                Button("저장소 폴더 열기") {
+                    appModel.openStorageDirectory()
                 }
                 .buttonStyle(.bordered)
             }
 
-            Text(appModel.launchAtLoginStatus)
+            Text("단축키: \(GlobalHotKeyAction.toggleSearch.displayString) 검색 · \(GlobalHotKeyAction.nameCurrentWindow.displayString) 이름 붙이기")
                 .font(.caption)
                 .foregroundStyle(Color.white.opacity(0.72))
         }

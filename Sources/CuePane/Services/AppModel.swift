@@ -1,48 +1,45 @@
 import AppKit
-import Combine
 import Foundation
 
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var accessibilityGranted = false
-    @Published private(set) var topologySummary = "화면 정보를 읽는 중"
-    @Published private(set) var lastSavedSummary = "아직 저장 안 됨"
-    @Published private(set) var lastRestoreSummary = "아직 복원 안 됨"
-    @Published private(set) var pendingRestoreCount = 0
-    @Published private(set) var recentLogs: [String] = []
+    @Published private(set) var topologySummary = DisplayTopology.current().summary
     @Published private(set) var liveWindowCount = 0
-    @Published private(set) var currentProfileWindowCount = 0
-    @Published private(set) var lastCaptureSummary: CaptureSummary?
-    @Published private(set) var lastRestoreReport: RestoreReport?
-    @Published private(set) var launchAtLoginEnabled = false
-    @Published private(set) var launchAtLoginStatus = "확인 중"
-    @Published private(set) var shouldRecommendOnboarding = false
+    @Published private(set) var anchors: [AnchorRecord] = []
+    @Published private(set) var presentations: [AnchorPresentation] = []
+    @Published private(set) var lastActionSummary = "저장된 앵커가 없습니다"
+    @Published var searchQuery = ""
+    @Published var namingDraft = ""
+    @Published private(set) var namingTargetDescription = ""
+    @Published private(set) var namingPreviewCount = 0
+    @Published private(set) var editingExistingAnchor = false
     @Published var preferences: CuePanePreferences {
         didSet {
             persistPreferences()
-            restartCaptureTimer()
+            refreshCatalogSnapshot()
         }
     }
 
     private let defaults = UserDefaults.standard
     private let preferencesKey = "dev.cuepane.preferences"
-    private let onboardingAutoPresentationKey = "dev.cuepane.didAutoPresentOnboarding"
+    private let onboardingPresentationKey = "dev.cuepane.didAutoPresentOnboarding"
 
     private let permissionManager = AccessibilityPermissionManager()
-    private let displayMonitor = DisplayTopologyMonitor()
-    private let profileStore = ProfileStore()
     private let windowCatalog = WindowCatalogService()
-    private let launchAtLoginManager = LaunchAtLoginManager()
-    private lazy var captureService = LayoutCaptureService(windowCatalog: windowCatalog)
-    private lazy var logger = EventLogger(logsDirectory: profileStore.logsDirectory)
-    private lazy var restoreCoordinator = RestoreCoordinator(windowCatalog: windowCatalog, logger: logger)
+    private let anchorStore = AnchorStore()
+    private let hotKeyManager = GlobalHotKeyManager()
+    private lazy var captureService = ContextCaptureService(windowCatalog: windowCatalog)
+    private lazy var recallCoordinator = RecallCoordinator(windowCatalog: windowCatalog)
 
-    private var captureTimer: Timer?
-    private var displayChangeWorkItem: DispatchWorkItem?
-    private var started = false
-    private var isTransitioning = false
-    private var showDiagnosticsWindowAction: (() -> Void)?
-    private var showOnboardingWindowAction: (() -> Void)?
+    private var didStart = false
+    private var namingTargetWindow: LiveWindow?
+    private var namingAnchorID: UUID?
+    private var showSearchAction: (() -> Void)?
+    private var dismissSearchAction: (() -> Void)?
+    private var showNamingAction: (() -> Void)?
+    private var dismissNamingAction: (() -> Void)?
+    private var showOnboardingAction: (() -> Void)?
 
     init() {
         if
@@ -54,411 +51,372 @@ final class AppModel: ObservableObject {
             preferences = .default
         }
 
-        logger.onEntry = { [weak self] entry in
-            guard let self else {
-                return
-            }
-
-            Task { @MainActor in
-                self.recentLogs.insert(entry, at: 0)
-                self.recentLogs = Array(self.recentLogs.prefix(24))
-            }
-        }
+        anchors = sortedAnchors(anchorStore.loadAnchors())
     }
 
     func configureWindowActions(
-        showDiagnostics: @escaping () -> Void,
+        showSearch: @escaping () -> Void,
+        dismissSearch: @escaping () -> Void,
+        showNaming: @escaping () -> Void,
+        dismissNaming: @escaping () -> Void,
         showOnboarding: @escaping () -> Void
     ) {
-        showDiagnosticsWindowAction = showDiagnostics
-        showOnboardingWindowAction = showOnboarding
+        showSearchAction = showSearch
+        dismissSearchAction = dismissSearch
+        showNamingAction = showNaming
+        dismissNamingAction = dismissNaming
+        showOnboardingAction = showOnboarding
     }
 
     func start() {
-        guard !started else {
+        guard !didStart else {
             return
         }
 
-        started = true
+        didStart = true
         refreshAccessibility(prompt: false)
-        syncLaunchAtLoginStatus()
-
-        displayMonitor.onChange = { [weak self] topology in
+        refreshCatalogSnapshot()
+        hotKeyManager.onAction = { [weak self] action in
             guard let self else {
                 return
             }
+
             Task { @MainActor in
-                self.handleDisplayChange(to: topology)
+                switch action {
+                case .toggleSearch:
+                    self.openSearch()
+                case .nameCurrentWindow:
+                    self.beginNamingCurrentWindow()
+                }
             }
         }
-        displayMonitor.start()
+        hotKeyManager.register()
 
-        let topology = displayMonitor.currentTopology()
-        topologySummary = topology.summary
-        refreshRuntimeSnapshot(for: topology)
-        restartCaptureTimer()
-
-        if accessibilityGranted {
-            captureNow(reason: "앱 시작")
-        } else {
-            lastSavedSummary = "손쉬운 사용 권한이 필요합니다"
+        if preferences.showOnboardingOnLaunch && !defaults.bool(forKey: onboardingPresentationKey) {
+            defaults.set(true, forKey: onboardingPresentationKey)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.openOnboarding()
+            }
         }
-
-        presentOnboardingIfNeeded(trigger: "앱 시작")
     }
 
     func shutdown() {
-        captureTimer?.invalidate()
-        captureTimer = nil
-        displayMonitor.stop()
-        displayChangeWorkItem?.cancel()
+        persistAnchors()
+    }
+
+    var anchorCount: Int {
+        anchors.count
+    }
+
+    var filteredPresentations: [AnchorPresentation] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let base = presentations
+
+        guard !query.isEmpty else {
+            return base
+        }
+
+        return base
+            .compactMap { presentation -> (AnchorPresentation, Int)? in
+                let haystacks = [
+                    presentation.record.name.lowercased(),
+                    presentation.record.anchorWindow.appName.lowercased(),
+                    presentation.record.anchorWindow.title.lowercased(),
+                    presentation.record.anchorWindow.normalizedTitle.lowercased(),
+                ]
+
+                var score = 0
+                for haystack in haystacks {
+                    if haystack == query {
+                        score += 80
+                    } else if haystack.hasPrefix(query) {
+                        score += 46
+                    } else if haystack.contains(query) {
+                        score += 24
+                    }
+                }
+
+                if score == 0 {
+                    return nil
+                }
+
+                score += presentation.anchorLive ? 8 : 0
+                score += presentation.matchedCount
+                return (presentation, score)
+            }
+            .sorted { lhs, rhs in lhs.1 > rhs.1 }
+            .map(\.0)
+    }
+
+    var recentPresentations: [AnchorPresentation] {
+        Array(presentations.prefix(5))
     }
 
     func requestAccessibility() {
         refreshAccessibility(prompt: true)
-        refreshRuntimeSnapshot()
-
-        if accessibilityGranted {
-            captureNow(reason: "권한 허용 후 저장")
-        } else {
-            openOnboardingWindow()
-        }
+        refreshCatalogSnapshot()
     }
 
     func openAccessibilitySettings() {
         permissionManager.openSettings()
     }
 
-    func captureNow(reason: String = "수동 저장") {
+    func openStorageDirectory() {
+        anchorStore.openStorageDirectory()
+    }
+
+    func openSearch() {
+        refreshCatalogSnapshot()
+        searchQuery = ""
+        showSearchAction?()
+    }
+
+    func dismissSearch() {
+        dismissSearchAction?()
+    }
+
+    func beginNamingCurrentWindow() {
+        refreshAccessibility(prompt: false)
+
         guard accessibilityGranted else {
-            lastSavedSummary = "손쉬운 사용 권한이 필요합니다"
-            logger.log("저장 건너뜀 · 권한 없음")
+            lastActionSummary = "손쉬운 사용 권한이 필요합니다"
+            openOnboarding()
             return
         }
 
-        guard !isTransitioning else {
-            logger.log("저장 건너뜀 · 토폴로지 전환 중")
+        let topology = DisplayTopology.current()
+        guard let focusedWindow = windowCatalog.focusedWindow(
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet
+        ) else {
+            lastActionSummary = "현재 활성 윈도우를 찾지 못했습니다"
             return
         }
 
-        let topology = displayMonitor.currentTopology()
-        let profile = captureService.captureLayout(
+        namingTargetWindow = focusedWindow
+        namingAnchorID = matchingRecord(for: focusedWindow)?.id
+        editingExistingAnchor = namingAnchorID != nil
+        namingDraft = matchingRecord(for: focusedWindow)?.name ?? suggestedName(for: focusedWindow)
+        namingTargetDescription = summary(for: focusedWindow)
+        namingPreviewCount = max(1, liveWindows(on: focusedWindow.displayID, topology: topology).count)
+        showNamingAction?()
+    }
+
+    func dismissNaming() {
+        dismissNamingAction?()
+    }
+
+    func saveNamingDraft() {
+        guard let namingTargetWindow else {
+            lastActionSummary = "저장할 윈도우가 없습니다"
+            return
+        }
+
+        let trimmedName = namingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            lastActionSummary = "이름을 입력해야 합니다"
+            return
+        }
+
+        let topology = DisplayTopology.current()
+        guard let captured = captureService.captureAnchor(
+            id: namingAnchorID,
+            name: trimmedName,
+            anchorWindow: namingTargetWindow,
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet
+        ) else {
+            lastActionSummary = "문맥 스냅샷 저장에 실패했습니다"
+            return
+        }
+
+        var finalRecord = captured
+        if let previous = anchors.first(where: { $0.id == captured.id }) {
+            finalRecord.lastUsedAt = previous.lastUsedAt
+            finalRecord.usageCount = previous.usageCount
+        }
+
+        upsert(finalRecord)
+        persistAnchors()
+        refreshCatalogSnapshot()
+        lastActionSummary = "\(trimmedName) · 같은 모니터 \(finalRecord.totalWindowCount)개 창 저장"
+        dismissNaming()
+    }
+
+    func recall(_ presentation: AnchorPresentation, mode: RecallMode, destination: RecallDestination) {
+        recall(presentation.record, mode: mode, destination: destination)
+    }
+
+    func recall(_ record: AnchorRecord, mode: RecallMode, destination: RecallDestination) {
+        refreshAccessibility(prompt: false)
+
+        guard accessibilityGranted else {
+            lastActionSummary = "손쉬운 사용 권한이 필요합니다"
+            openOnboarding()
+            return
+        }
+
+        let topology = DisplayTopology.current()
+        let result = recallCoordinator.recall(
+            record: record,
+            request: RecallRequest(mode: mode, destination: destination),
             topology: topology,
             excludedBundleIDs: preferences.excludedBundleIDSet
         )
 
-        do {
-            try profileStore.save(profile: profile)
-            topologySummary = topology.summary
-            lastSavedSummary = "\(reason) · \(profile.windows.count)개 창 저장"
-            lastCaptureSummary = buildCaptureSummary(from: profile)
-            currentProfileWindowCount = profile.windows.count
-            logger.log("프로필 저장 · \(topology.summary) · \(profile.windows.count)개 창")
-            refreshRuntimeSnapshot(for: topology)
-        } catch {
-            lastSavedSummary = "저장 실패: \(error.localizedDescription)"
-            logger.log("프로필 저장 실패 · \(error.localizedDescription)")
+        if let index = anchors.firstIndex(where: { $0.id == record.id }) {
+            anchors[index].lastUsedAt = Date()
+            anchors[index].usageCount += 1
+            anchors[index].updatedAt = max(anchors[index].updatedAt, Date())
         }
+
+        persistAnchors()
+        refreshCatalogSnapshot()
+        lastActionSummary = result.summary
+        dismissSearch()
     }
 
-    func restoreCurrentTopology(reason: String = "수동 복원") {
-        let topology = displayMonitor.currentTopology()
-        topologySummary = topology.summary
-
-        guard accessibilityGranted else {
-            lastRestoreSummary = "손쉬운 사용 권한이 필요합니다"
-            lastRestoreReport = administrativeReport(
-                topology: topology,
-                reason: .noPermission,
-                note: "손쉬운 사용 권한이 없어 창을 복원할 수 없습니다."
-            )
-            logger.log("복원 건너뜀 · 권한 없음")
-            presentOnboardingIfNeeded(trigger: "복원 시도")
-            return
-        }
-
-        guard let profile = profileStore.loadProfile(for: topology.fingerprint) else {
-            lastRestoreSummary = "현재 토폴로지 저장본이 없습니다"
-            lastRestoreReport = administrativeReport(
-                topology: topology,
-                reason: .noProfile,
-                note: "현재 디스플레이 조합에 대한 저장본이 아직 없습니다."
-            )
-            logger.log("복원 건너뜀 · 프로필 없음")
-            refreshRuntimeSnapshot(for: topology)
-            return
-        }
-
-        let outcome = restoreCoordinator.restore(
-            profile: profile,
-            topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet,
-            matchingMode: preferences.matchingMode,
-            verifyAfterMove: preferences.verifyRestoreEnabled
-        )
-        applyRestoreOutcome(outcome, reason: reason, topology: topology)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            Task { @MainActor in
-                self?.captureNow(reason: "복원 후 안정화")
-            }
-        }
-    }
-
-    func retryPendingRestores() {
-        let topology = displayMonitor.currentTopology()
-
-        guard accessibilityGranted else {
-            lastRestoreReport = administrativeReport(
-                topology: topology,
-                reason: .noPermission,
-                note: "권한이 없어서 보류 복원을 재시도할 수 없습니다."
-            )
-            return
-        }
-
-        let pending = profileStore.loadPending(for: topology.fingerprint)
-
-        guard !pending.isEmpty else {
-            pendingRestoreCount = 0
-            refreshRuntimeSnapshot(for: topology)
-            return
-        }
-
-        let outcome = restoreCoordinator.retryPending(
-            pending,
-            topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet,
-            matchingMode: preferences.matchingMode,
-            verifyAfterMove: preferences.verifyRestoreEnabled
-        )
-        applyRestoreOutcome(outcome, reason: "보류 재시도", topology: topology)
-    }
-
-    func refreshDiagnostics() {
+    func updateContext(for record: AnchorRecord) {
         refreshAccessibility(prompt: false)
-        syncLaunchAtLoginStatus()
-        refreshRuntimeSnapshot()
-    }
 
-    func openDiagnosticsWindow() {
-        showDiagnosticsWindowAction?()
-    }
-
-    func openOnboardingWindow() {
-        showOnboardingWindowAction?()
-    }
-
-    func setLaunchAtLoginEnabled(_ enabled: Bool) {
-        do {
-            let state = try launchAtLoginManager.setEnabled(enabled)
-            launchAtLoginEnabled = state.isEnabled
-            launchAtLoginStatus = state.message
-            logger.log("로그인 시 실행 변경 · \(state.message)")
-        } catch {
-            launchAtLoginEnabled = launchAtLoginManager.currentState().isEnabled
-            launchAtLoginStatus = error.localizedDescription
-            logger.log("로그인 시 실행 변경 실패 · \(error.localizedDescription)")
+        guard accessibilityGranted else {
+            lastActionSummary = "손쉬운 사용 권한이 필요합니다"
+            openOnboarding()
+            return
         }
+
+        let topology = DisplayTopology.current()
+        guard let liveAnchor = recallCoordinator.captureTarget(
+            for: record,
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet
+        ) else {
+            lastActionSummary = "\(record.name) · 현재 살아 있는 앵커 창을 찾지 못했습니다"
+            return
+        }
+
+        guard let captured = captureService.captureAnchor(
+            id: record.id,
+            name: record.name,
+            anchorWindow: liveAnchor,
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet
+        ) else {
+            lastActionSummary = "\(record.name) · 문맥 업데이트 실패"
+            return
+        }
+
+        var updatedRecord = captured
+        updatedRecord.lastUsedAt = record.lastUsedAt
+        updatedRecord.usageCount = record.usageCount
+        upsert(updatedRecord)
+        persistAnchors()
+        refreshCatalogSnapshot()
+        lastActionSummary = "\(record.name) · 문맥을 현재 상태로 업데이트했습니다"
     }
 
-    func openProfilesDirectory() {
-        NSWorkspace.shared.activateFileViewerSelecting([profileStore.profilesDirectory])
+    func delete(_ record: AnchorRecord) {
+        anchors.removeAll { $0.id == record.id }
+        persistAnchors()
+        refreshCatalogSnapshot()
+        lastActionSummary = "\(record.name) 앵커를 삭제했습니다"
     }
 
-    func openLogsDirectory() {
-        NSWorkspace.shared.activateFileViewerSelecting([profileStore.logsDirectory])
+    func openOnboarding() {
+        showOnboardingAction?()
     }
 
     func quit() {
-        NSApp.terminate(nil)
+        NSApplication.shared.terminate(nil)
     }
 
-    private func handleDisplayChange(to topology: DisplayTopology) {
+    private func refreshCatalogSnapshot() {
+        let topology = DisplayTopology.current()
         topologySummary = topology.summary
-        logger.log("화면 변경 감지 · \(topology.summary)")
-        refreshRuntimeSnapshot(for: topology)
-
-        isTransitioning = true
-        displayChangeWorkItem?.cancel()
-
-        guard preferences.autoRestoreEnabled else {
-            displayChangeWorkItem = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + preferences.restoreDelaySeconds) { [weak self] in
-                Task { @MainActor in
-                    self?.isTransitioning = false
-                    self?.captureNow(reason: "화면 변경 후 저장")
-                }
+        liveWindowCount = windowCatalog.fetchWindows(
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet
+        ).count
+        presentations = sortedPresentations(
+            anchors.map {
+                recallCoordinator.presentation(
+                    for: $0,
+                    topology: topology,
+                    excludedBundleIDs: preferences.excludedBundleIDSet
+                )
             }
-            return
-        }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-
-            Task { @MainActor in
-                self.restoreCurrentTopology(reason: "자동 복원")
-                self.isTransitioning = false
-            }
-        }
-
-        displayChangeWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + preferences.restoreDelaySeconds, execute: workItem)
+        )
     }
 
     private func refreshAccessibility(prompt: Bool) {
         accessibilityGranted = permissionManager.isTrusted(prompt: prompt)
-        shouldRecommendOnboarding = !accessibilityGranted
+    }
 
-        if accessibilityGranted {
-            logger.log("손쉬운 사용 권한 확인 완료")
+    private func liveWindows(on displayID: String, topology: DisplayTopology) -> [LiveWindow] {
+        windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: preferences.excludedBundleIDSet)
+            .filter { $0.displayID == displayID }
+    }
+
+    private func matchingRecord(for liveWindow: LiveWindow) -> AnchorRecord? {
+        anchors.first { record in
+            record.anchorWindow.bundleIdentifier == liveWindow.bundleIdentifier &&
+            record.anchorWindow.normalizedTitle == liveWindow.normalizedTitle
+        }
+    }
+
+    private func suggestedName(for liveWindow: LiveWindow) -> String {
+        let trimmedTitle = liveWindow.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.isEmpty {
+            return liveWindow.appName
+        }
+
+        return trimmedTitle
+    }
+
+    private func summary(for liveWindow: LiveWindow) -> String {
+        let title = liveWindow.title.isEmpty ? "제목 없음" : liveWindow.title
+        return "\(liveWindow.appName) · \(title)"
+    }
+
+    private func upsert(_ record: AnchorRecord) {
+        if let index = anchors.firstIndex(where: { $0.id == record.id }) {
+            anchors[index] = record
         } else {
-            logger.log("손쉬운 사용 권한 필요")
-        }
-    }
-
-    private func syncLaunchAtLoginStatus() {
-        let state = launchAtLoginManager.currentState()
-        launchAtLoginEnabled = state.isEnabled
-        launchAtLoginStatus = state.message
-    }
-
-    private func restartCaptureTimer() {
-        captureTimer?.invalidate()
-        captureTimer = nil
-
-        guard started, preferences.autoCaptureEnabled else {
-            return
+            anchors.append(record)
         }
 
-        captureTimer = Timer.scheduledTimer(withTimeInterval: preferences.captureIntervalSeconds, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.captureTick()
-            }
+        anchors = sortedAnchors(anchors)
+    }
+
+    private func persistAnchors() {
+        do {
+            try anchorStore.saveAnchors(anchors)
+        } catch {
+            lastActionSummary = "앵커 저장 실패: \(error.localizedDescription)"
         }
-
-        if let captureTimer {
-            RunLoop.main.add(captureTimer, forMode: .common)
-        }
-    }
-
-    private func captureTick() {
-        guard !isTransitioning else {
-            return
-        }
-
-        captureNow(reason: "자동 저장")
-        retryPendingRestores()
-    }
-
-    private func refreshRuntimeSnapshot(for topology: DisplayTopology? = nil) {
-        let topology = topology ?? displayMonitor.currentTopology()
-        topologySummary = topology.summary
-        currentProfileWindowCount = profileStore.loadProfile(for: topology.fingerprint)?.windows.count ?? 0
-        pendingRestoreCount = profileStore.loadPending(for: topology.fingerprint).count
-
-        guard accessibilityGranted else {
-            liveWindowCount = 0
-            return
-        }
-
-        let liveWindows = windowCatalog.fetchWindows(
-            topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet
-        )
-        liveWindowCount = liveWindows.count
-    }
-
-    private func buildCaptureSummary(from profile: LayoutProfile) -> CaptureSummary {
-        let grouped = Dictionary(grouping: profile.windows, by: \.appName)
-        let appBreakdown = grouped
-            .map { key, value in (key, value.count) }
-            .sorted { lhs, rhs in
-                if lhs.1 == rhs.1 {
-                    return lhs.0 < rhs.0
-                }
-                return lhs.1 > rhs.1
-            }
-            .prefix(5)
-            .map { "\($0.0) \($0.1)개" }
-
-        return CaptureSummary(
-            createdAt: profile.updatedAt,
-            topologySummary: profile.topology.summary,
-            windowCount: profile.windows.count,
-            appBreakdown: appBreakdown
-        )
-    }
-
-    private func administrativeReport(
-        topology: DisplayTopology,
-        reason: RestoreTraceReason,
-        note: String
-    ) -> RestoreReport {
-        RestoreReport(
-            topologyFingerprint: topology.fingerprint,
-            topologySummary: topology.summary,
-            createdAt: Date(),
-            restoredCount: 0,
-            pendingCount: 0,
-            skippedCount: 1,
-            traces: [
-                RestoreTrace(
-                    appName: "CuePane",
-                    bundleIdentifier: Bundle.main.bundleIdentifier ?? "dev.cuepane.app",
-                    requestedTitle: "",
-                    matchedTitle: "",
-                    targetDisplayName: topology.summary,
-                    sourceDisplayName: "",
-                    score: nil,
-                    status: .skipped,
-                    reason: reason,
-                    note: note
-                ),
-            ]
-        )
-    }
-
-    private func applyRestoreOutcome(
-        _ outcome: RestoreOutcome,
-        reason: String,
-        topology: DisplayTopology
-    ) {
-        persistPending(outcome.pending, fingerprint: topology.fingerprint)
-
-        pendingRestoreCount = outcome.pending.count
-        lastRestoreReport = outcome.report
-        lastRestoreSummary = "\(reason) · \(outcome.summary)"
-        logger.log("\(reason) 완료 · \(outcome.summary)")
-        refreshRuntimeSnapshot(for: topology)
     }
 
     private func persistPreferences() {
-        guard let data = try? JSONEncoder().encode(preferences) else {
-            return
-        }
-        defaults.set(data, forKey: preferencesKey)
-    }
-
-    private func persistPending(_ pending: [PendingRestore], fingerprint: String) {
-        do {
-            try profileStore.savePending(pending, for: fingerprint)
-        } catch {
-            logger.log("보류 큐 저장 실패 · \(error.localizedDescription)")
+        if let data = try? JSONEncoder().encode(preferences) {
+            defaults.set(data, forKey: preferencesKey)
         }
     }
 
-    private func presentOnboardingIfNeeded(trigger: String) {
-        guard shouldRecommendOnboarding else {
-            return
+    private func sortedAnchors(_ records: [AnchorRecord]) -> [AnchorRecord] {
+        records.sorted { lhs, rhs in
+            if lhs.lastUsedAt == rhs.lastUsedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return (lhs.lastUsedAt ?? .distantPast) > (rhs.lastUsedAt ?? .distantPast)
         }
+    }
 
-        if !defaults.bool(forKey: onboardingAutoPresentationKey) {
-            defaults.set(true, forKey: onboardingAutoPresentationKey)
-            logger.log("온보딩 표시 · \(trigger)")
-            openOnboardingWindow()
+    private func sortedPresentations(_ presentations: [AnchorPresentation]) -> [AnchorPresentation] {
+        presentations.sorted { lhs, rhs in
+            if lhs.record.lastUsedAt == rhs.record.lastUsedAt {
+                return lhs.record.updatedAt > rhs.record.updatedAt
+            }
+            return (lhs.record.lastUsedAt ?? .distantPast) > (rhs.record.lastUsedAt ?? .distantPast)
         }
     }
 }

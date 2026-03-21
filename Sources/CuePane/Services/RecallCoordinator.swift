@@ -1,306 +1,152 @@
 import Foundation
 
-final class RestoreCoordinator {
+final class RecallCoordinator {
     private let windowCatalog: WindowCatalogService
-    private let logger: EventLogger
-    private let pendingAttemptLimit = 6
 
-    init(windowCatalog: WindowCatalogService, logger: EventLogger) {
+    init(windowCatalog: WindowCatalogService) {
         self.windowCatalog = windowCatalog
-        self.logger = logger
     }
 
-    func restore(
-        profile: LayoutProfile,
-        topology: DisplayTopology,
-        excludedBundleIDs: Set<String>,
-        matchingMode: MatchingMode,
-        verifyAfterMove: Bool
-    ) -> RestoreOutcome {
-        let tasks = profile.windows.map { PendingRestore(snapshot: $0) }
-        return apply(
-            tasks: tasks,
-            topology: topology,
-            excludedBundleIDs: excludedBundleIDs,
-            matchingMode: matchingMode,
-            verifyAfterMove: verifyAfterMove
+    func presentation(for record: AnchorRecord, topology: DisplayTopology, excludedBundleIDs: Set<String>) -> AnchorPresentation {
+        let liveWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
+        let matches = matchSnapshots(for: record, in: liveWindows)
+        let anchorLive = bestMatch(for: record.anchorWindow, windows: liveWindows) != nil
+
+        return AnchorPresentation(
+            record: record,
+            matchedCount: matches.count,
+            anchorLive: anchorLive
         )
     }
 
-    func retryPending(
-        _ pending: [PendingRestore],
-        topology: DisplayTopology,
-        excludedBundleIDs: Set<String>,
-        matchingMode: MatchingMode,
-        verifyAfterMove: Bool
-    ) -> RestoreOutcome {
-        apply(
-            tasks: pending,
-            topology: topology,
-            excludedBundleIDs: excludedBundleIDs,
-            matchingMode: matchingMode,
-            verifyAfterMove: verifyAfterMove
-        )
+    func bestRecord(for liveWindow: LiveWindow, records: [AnchorRecord]) -> AnchorRecord? {
+        records.max { lhs, rhs in
+            score(snapshot: lhs.anchorWindow, window: liveWindow) < score(snapshot: rhs.anchorWindow, window: liveWindow)
+        }
     }
 
-    private func apply(
-        tasks: [PendingRestore],
+    func captureTarget(for record: AnchorRecord, topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
+        let liveWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
+        return bestMatch(for: record.anchorWindow, windows: liveWindows)?.window
+    }
+
+    func recall(
+        record: AnchorRecord,
+        request: RecallRequest,
         topology: DisplayTopology,
-        excludedBundleIDs: Set<String>,
-        matchingMode: MatchingMode,
-        verifyAfterMove: Bool
-    ) -> RestoreOutcome {
-        var availableWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
-        var restoredCount = 0
-        var skippedCount = 0
-        var pending: [PendingRestore] = []
-        var traces: [RestoreTrace] = []
+        excludedBundleIDs: Set<String>
+    ) -> RecallResult {
+        var liveWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
+        let targetDisplay = request.destination == .currentDisplay ? topology.currentPointerDisplay() : nil
 
-        for task in tasks {
-            if task.attempts >= pendingAttemptLimit {
-                skippedCount += 1
-                traces.append(
-                    RestoreTrace(
-                        appName: task.snapshot.appName,
-                        bundleIdentifier: task.snapshot.bundleIdentifier,
-                        requestedTitle: task.snapshot.title,
-                        matchedTitle: "",
-                        targetDisplayName: displayLabel(for: topology.display(id: task.snapshot.displayID)),
-                        sourceDisplayName: "",
-                        score: nil,
-                        status: .skipped,
-                        reason: .pendingLimitExceeded,
-                        note: "보류 재시도 한도 \(pendingAttemptLimit)회를 넘겼습니다."
-                    )
-                )
+        let snapshots = orderedSnapshots(for: record, mode: request.mode)
+        var matchedCount = 0
+        var movedCount = 0
+        var unresolvedTitles: [String] = []
+        var pendingRaise: [LiveWindow] = []
+
+        for snapshot in snapshots {
+            guard let match = bestMatch(for: snapshot, windows: liveWindows) else {
+                unresolvedTitles.append(snapshot.title.isEmpty ? snapshot.appName : snapshot.title)
                 continue
             }
 
-            guard let targetDisplay = topology.display(id: task.snapshot.displayID) ?? topology.fallbackDisplay else {
-                skippedCount += 1
-                traces.append(
-                    RestoreTrace(
-                        appName: task.snapshot.appName,
-                        bundleIdentifier: task.snapshot.bundleIdentifier,
-                        requestedTitle: task.snapshot.title,
-                        matchedTitle: "",
-                        targetDisplayName: task.snapshot.displayID,
-                        sourceDisplayName: "",
-                        score: nil,
-                        status: .skipped,
-                        reason: .targetDisplayUnavailable,
-                        note: "현재 연결된 화면 중 대상 화면을 찾지 못했습니다."
-                    )
-                )
-                continue
-            }
+            let liveWindow = liveWindows.remove(at: match.index)
 
-            guard
-                let match = bestMatch(
-                    for: task.snapshot,
-                    windows: availableWindows,
-                    matchingMode: matchingMode
-                )
-            else {
-                let nextTask = task.incremented()
-                if nextTask.attempts >= pendingAttemptLimit {
-                    skippedCount += 1
-                    traces.append(
-                        RestoreTrace(
-                            appName: task.snapshot.appName,
-                            bundleIdentifier: task.snapshot.bundleIdentifier,
-                            requestedTitle: task.snapshot.title,
-                            matchedTitle: "",
-                            targetDisplayName: displayLabel(for: targetDisplay),
-                            sourceDisplayName: "",
-                            score: nil,
-                            status: .skipped,
-                            reason: .pendingLimitExceeded,
-                            note: "창을 계속 찾지 못해 보류 한도를 넘겼습니다."
-                        )
-                    )
-                } else {
-                    pending.append(nextTask)
-                    traces.append(
-                        RestoreTrace(
-                            appName: task.snapshot.appName,
-                            bundleIdentifier: task.snapshot.bundleIdentifier,
-                            requestedTitle: task.snapshot.title,
-                            matchedTitle: "",
-                            targetDisplayName: displayLabel(for: targetDisplay),
-                            sourceDisplayName: "",
-                            score: nil,
-                            status: .pending,
-                            reason: .noMatch,
-                            note: "현재 보이는 창 중 일치하는 창을 찾지 못했습니다."
-                        )
-                    )
+            if let targetDisplay {
+                let targetFrame = snapshot.normalizedFrame.denormalized(in: targetDisplay.visibleFrame.cgRect)
+                if windowCatalog.move(window: liveWindow, to: targetFrame) {
+                    movedCount += 1
                 }
-                continue
             }
 
-            let liveWindow = availableWindows.remove(at: match.index)
-            let targetFrame = task.snapshot.normalizedFrame.denormalized(in: targetDisplay.visibleFrame.cgRect)
-
-            if windowCatalog.move(window: liveWindow, to: targetFrame) {
-                if verifyAfterMove, let actualFrame = windowCatalog.currentFrame(for: liveWindow), !matches(actualFrame, targetFrame) {
-                    pending.append(task.incremented())
-                    traces.append(
-                        RestoreTrace(
-                            appName: task.snapshot.appName,
-                            bundleIdentifier: task.snapshot.bundleIdentifier,
-                            requestedTitle: task.snapshot.title,
-                            matchedTitle: liveWindow.title,
-                            targetDisplayName: displayLabel(for: targetDisplay),
-                            sourceDisplayName: displayLabel(for: topology.display(id: liveWindow.displayID)),
-                            score: match.score,
-                            status: .pending,
-                            reason: .verificationMismatch,
-                            note: "\(match.note) · 이동 후 좌표 오차가 커서 다시 시도합니다."
-                        )
-                    )
-                    logger.log("복원 검증 실패 · \(task.snapshot.appName) · \(task.snapshot.title)")
-                } else {
-                    restoredCount += 1
-                    traces.append(
-                        RestoreTrace(
-                            appName: task.snapshot.appName,
-                            bundleIdentifier: task.snapshot.bundleIdentifier,
-                            requestedTitle: task.snapshot.title,
-                            matchedTitle: liveWindow.title,
-                            targetDisplayName: displayLabel(for: targetDisplay),
-                            sourceDisplayName: displayLabel(for: topology.display(id: liveWindow.displayID)),
-                            score: match.score,
-                            status: .restored,
-                            reason: .matched,
-                            note: match.note
-                        )
-                    )
-                    logger.log("복원 성공 · \(task.snapshot.appName) · \(displayLabel(for: targetDisplay))")
-                }
-            } else {
-                pending.append(task.incremented())
-                traces.append(
-                    RestoreTrace(
-                        appName: task.snapshot.appName,
-                        bundleIdentifier: task.snapshot.bundleIdentifier,
-                        requestedTitle: task.snapshot.title,
-                        matchedTitle: liveWindow.title,
-                        targetDisplayName: displayLabel(for: targetDisplay),
-                        sourceDisplayName: displayLabel(for: topology.display(id: liveWindow.displayID)),
-                        score: match.score,
-                        status: .pending,
-                        reason: .moveFailed,
-                        note: "\(match.note) · AX 이동 또는 크기 변경이 실패했습니다."
-                    )
-                )
-                logger.log("복원 실패 · \(task.snapshot.appName) · \(task.snapshot.title)")
-            }
+            pendingRaise.append(liveWindow)
+            matchedCount += 1
         }
 
-        return RestoreOutcome(
-            restoredCount: restoredCount,
-            pending: pending,
-            skippedCount: skippedCount,
-            report: RestoreReport(
-                topologyFingerprint: topology.fingerprint,
-                topologySummary: topology.summary,
-                createdAt: Date(),
-                restoredCount: restoredCount,
-                pendingCount: pending.count,
-                skippedCount: skippedCount,
-                traces: traces
-            )
+        for liveWindow in pendingRaise {
+            _ = windowCatalog.raise(window: liveWindow)
+        }
+
+        return RecallResult(
+            anchorID: record.id,
+            anchorName: record.name,
+            mode: request.mode,
+            destination: request.destination,
+            requestedCount: snapshots.count,
+            matchedCount: matchedCount,
+            movedCount: movedCount,
+            unresolvedTitles: unresolvedTitles
         )
     }
 
-    private func bestMatch(
-        for snapshot: WindowSnapshot,
-        windows: [LiveWindow],
-        matchingMode: MatchingMode
-    ) -> (index: Int, score: Int, note: String)? {
-        let scored = windows.enumerated().compactMap { index, window -> (Int, Int)? in
-            guard window.bundleIdentifier == snapshot.bundleIdentifier else {
+    private func orderedSnapshots(for record: AnchorRecord, mode: RecallMode) -> [WindowSnapshot] {
+        switch mode {
+        case .context:
+            return record.contextWindows.sorted { $0.captureOrder < $1.captureOrder } + [record.anchorWindow]
+        case .anchorOnly:
+            return [record.anchorWindow]
+        }
+    }
+
+    private func matchSnapshots(for record: AnchorRecord, in windows: [LiveWindow]) -> [(snapshot: WindowSnapshot, window: LiveWindow)] {
+        var available = windows
+        let snapshots = orderedSnapshots(for: record, mode: .context)
+
+        return snapshots.compactMap { snapshot in
+            guard let match = bestMatch(for: snapshot, windows: available) else {
                 return nil
             }
 
-            let evaluation = score(snapshot: snapshot, window: window)
-            guard evaluation.score >= matchingMode.minimumScore else {
-                return nil
-            }
-            return (index, evaluation.score)
+            let liveWindow = available.remove(at: match.index)
+            return (snapshot, liveWindow)
         }
-
-        guard let winner = scored.max(by: { lhs, rhs in lhs.1 < rhs.1 }) else {
-            return nil
-        }
-
-        let detail = score(snapshot: snapshot, window: windows[winner.0])
-        return (winner.0, winner.1, detail.note)
     }
 
-    private func score(snapshot: WindowSnapshot, window: LiveWindow) -> (score: Int, note: String) {
-        var score = 22
-        var reasons: [String] = []
+    private func bestMatch(for snapshot: WindowSnapshot, windows: [LiveWindow]) -> (index: Int, window: LiveWindow, score: Int)? {
+        windows.enumerated()
+            .compactMap { index, window -> (Int, LiveWindow, Int)? in
+                guard window.bundleIdentifier == snapshot.bundleIdentifier else {
+                    return nil
+                }
+
+                let matchScore = score(snapshot: snapshot, window: window)
+                guard matchScore >= 28 else {
+                    return nil
+                }
+
+                return (index, window, matchScore)
+            }
+            .max(by: { lhs, rhs in lhs.2 < rhs.2 })
+    }
+
+    private func score(snapshot: WindowSnapshot, window: LiveWindow) -> Int {
+        var score = 20
 
         if snapshot.appKind == window.appKind {
             score += 8
-            reasons.append("앱 유형 일치")
         }
 
         if !snapshot.normalizedTitle.isEmpty && snapshot.normalizedTitle == window.normalizedTitle {
-            score += titleExactMatchBonus(for: snapshot.appKind)
-            reasons.append("제목 일치")
+            score += 34
         } else if !snapshot.normalizedTitle.isEmpty, window.normalizedTitle.contains(snapshot.normalizedTitle) {
-            score += 20
-            reasons.append("제목 포함")
+            score += 22
         } else {
-            let overlap = tokenOverlap(snapshot.titleTokens, window.titleTokens)
-            if overlap > 0 {
-                let bonus = min(24, Int((overlap * 28).rounded()))
-                score += bonus
-                reasons.append("제목 토큰 유사")
-            }
+            score += tokenOverlapScore(lhs: snapshot.titleTokens, rhs: window.titleTokens)
         }
 
         if snapshot.role == window.role {
-            score += 10
-            reasons.append("role 일치")
+            score += 8
         }
 
         if !snapshot.subrole.isEmpty && snapshot.subrole == window.subrole {
-            score += 6
-            reasons.append("subrole 일치")
+            score += 5
         }
 
-        if snapshot.sizeBucket == SizeBucket(size: window.frame.size) {
-            score += 10
-            reasons.append("크기 버킷 일치")
-        } else {
-            let sizeDelta = abs(snapshot.frame.width - window.frame.width) + abs(snapshot.frame.height - window.frame.height)
-            if sizeDelta < 120 {
-                score += 6
-                reasons.append("크기 근접")
-            }
-        }
-
-        let orderDelta = abs(snapshot.captureOrder - window.windowOrder)
-        if orderDelta == 0 {
-            score += 12
-            reasons.append("같은 순서")
-        } else if orderDelta == 1 {
-            score += 7
-            reasons.append("인접 순서")
-        }
-
-        if snapshot.isFocused && window.isFocused {
-            score += 9
-            reasons.append("포커스 창")
-        }
-
-        if snapshot.displayID == window.displayID {
-            score += 4
-            reasons.append("같은 현재 화면")
+        let widthDelta = abs(snapshot.frame.width - window.frame.width)
+        let heightDelta = abs(snapshot.frame.height - window.frame.height)
+        if widthDelta + heightDelta < 160 {
+            score += 8
         }
 
         let centerDistance = hypot(
@@ -308,48 +154,30 @@ final class RestoreCoordinator {
             snapshot.centerPoint.y - window.centerPoint.y
         )
         if centerDistance < 180 {
-            score += 7
-            reasons.append("위치 근접")
-        } else if centerDistance < 420 {
-            score += 3
-            reasons.append("대략 위치 유사")
+            score += 10
+        } else if centerDistance < 360 {
+            score += 4
         }
 
-        return (score, reasons.joined(separator: " + "))
-    }
-
-    private func titleExactMatchBonus(for appKind: WindowAppKind) -> Int {
-        switch appKind {
-        case .browser: 38
-        case .editor: 34
-        case .terminal: 26
-        case .generic: 30
+        if snapshot.isFocused && window.isFocused {
+            score += 8
         }
+
+        return score
     }
 
-    private func tokenOverlap(_ lhs: [String], _ rhs: [String]) -> Double {
-        let left = Set(lhs)
-        let right = Set(rhs)
-        guard !left.isEmpty, !right.isEmpty else {
+    private func tokenOverlapScore(lhs: [String], rhs: [String]) -> Int {
+        guard !lhs.isEmpty, !rhs.isEmpty else {
             return 0
         }
 
-        let overlap = Double(left.intersection(right).count)
-        return overlap / Double(max(left.count, right.count))
-    }
-
-    private func matches(_ actual: CGRect, _ target: CGRect) -> Bool {
-        let centerDistance = hypot(actual.midX - target.midX, actual.midY - target.midY)
-        let widthDelta = abs(actual.width - target.width)
-        let heightDelta = abs(actual.height - target.height)
-
-        return centerDistance < 48 && widthDelta < 60 && heightDelta < 60
-    }
-
-    private func displayLabel(for display: DisplayDescriptor?) -> String {
-        guard let display else {
-            return "알 수 없는 화면"
+        let lhsSet = Set(lhs)
+        let rhsSet = Set(rhs)
+        let intersectionCount = lhsSet.intersection(rhsSet).count
+        guard intersectionCount > 0 else {
+            return 0
         }
-        return display.localizedName.isEmpty ? display.id : display.localizedName
+
+        return min(intersectionCount * 9, 24)
     }
 }

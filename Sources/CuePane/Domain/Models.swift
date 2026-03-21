@@ -37,8 +37,8 @@ struct RectData: Codable, Hashable {
         self.init(
             x: rect.origin.x,
             y: rect.origin.y,
-            width: rect.size.width,
-            height: rect.size.height
+            width: rect.width,
+            height: rect.height
         )
     }
 
@@ -77,16 +77,6 @@ struct NormalizedRect: Codable, Hashable {
             height: displayFrame.height * height
         )
         .constrained(to: displayFrame.insetBy(dx: 12, dy: 12))
-    }
-}
-
-struct SizeBucket: Codable, Hashable {
-    let widthBucket: Int
-    let heightBucket: Int
-
-    init(size: CGSize) {
-        widthBucket = Int((size.width / 120).rounded())
-        heightBucket = Int((size.height / 90).rounded())
     }
 }
 
@@ -164,6 +154,11 @@ struct DisplayTopology: Codable, Hashable {
         displays.first { $0.id == id }
     }
 
+    func currentPointerDisplay() -> DisplayDescriptor? {
+        let mouseLocation = NSEvent.mouseLocation
+        return displays.first { $0.frame.cgRect.contains(mouseLocation) } ?? fallbackDisplay
+    }
+
     var fallbackDisplay: DisplayDescriptor? {
         displays.first(where: \.isBuiltin) ?? displays.first
     }
@@ -188,179 +183,44 @@ struct WindowSnapshot: Codable, Hashable, Identifiable {
     let frame: RectData
     let centerPoint: PointData
     let normalizedFrame: NormalizedRect
-    let sizeBucket: SizeBucket
     let captureOrder: Int
     let isFocused: Bool
     let capturedAt: Date
-
-    init(
-        id: UUID,
-        bundleIdentifier: String,
-        appName: String,
-        title: String,
-        normalizedTitle: String,
-        titleTokens: [String],
-        role: String,
-        subrole: String,
-        appKind: WindowAppKind,
-        displayID: String,
-        frame: RectData,
-        centerPoint: PointData,
-        normalizedFrame: NormalizedRect,
-        sizeBucket: SizeBucket,
-        captureOrder: Int,
-        isFocused: Bool,
-        capturedAt: Date
-    ) {
-        self.id = id
-        self.bundleIdentifier = bundleIdentifier
-        self.appName = appName
-        self.title = title
-        self.normalizedTitle = normalizedTitle
-        self.titleTokens = titleTokens
-        self.role = role
-        self.subrole = subrole
-        self.appKind = appKind
-        self.displayID = displayID
-        self.frame = frame
-        self.centerPoint = centerPoint
-        self.normalizedFrame = normalizedFrame
-        self.sizeBucket = sizeBucket
-        self.captureOrder = captureOrder
-        self.isFocused = isFocused
-        self.capturedAt = capturedAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let title = try container.decode(String.self, forKey: .title)
-        let bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
-        let appName = try container.decode(String.self, forKey: .appName)
-        let normalizedTitle = try container.decodeIfPresent(String.self, forKey: .normalizedTitle)
-            ?? WindowTitleNormalizer.normalizedTitle(
-                title: title,
-                appName: appName,
-                bundleIdentifier: bundleIdentifier
-            )
-
-        let titleTokens = try container.decodeIfPresent([String].self, forKey: .titleTokens)
-            ?? WindowTitleNormalizer.tokens(from: normalizedTitle)
-
-        self.init(
-            id: try container.decode(UUID.self, forKey: .id),
-            bundleIdentifier: bundleIdentifier,
-            appName: appName,
-            title: title,
-            normalizedTitle: normalizedTitle,
-            titleTokens: titleTokens,
-            role: try container.decode(String.self, forKey: .role),
-            subrole: try container.decode(String.self, forKey: .subrole),
-            appKind: try container.decodeIfPresent(WindowAppKind.self, forKey: .appKind)
-                ?? WindowTitleNormalizer.appKind(bundleIdentifier: bundleIdentifier, appName: appName),
-            displayID: try container.decode(String.self, forKey: .displayID),
-            frame: try container.decodeIfPresent(RectData.self, forKey: .frame)
-                ?? RectData(try container.decodeIfPresent(NormalizedRect.self, forKey: .normalizedFrame)?.denormalized(in: .zero) ?? .zero),
-            centerPoint: try container.decodeIfPresent(PointData.self, forKey: .centerPoint)
-                ?? PointData(x: 0, y: 0),
-            normalizedFrame: try container.decode(NormalizedRect.self, forKey: .normalizedFrame),
-            sizeBucket: try container.decode(SizeBucket.self, forKey: .sizeBucket),
-            captureOrder: try container.decodeIfPresent(Int.self, forKey: .captureOrder) ?? 0,
-            isFocused: try container.decodeIfPresent(Bool.self, forKey: .isFocused) ?? false,
-            capturedAt: try container.decode(Date.self, forKey: .capturedAt)
-        )
-    }
 }
 
-struct LayoutProfile: Codable, Hashable {
-    let topology: DisplayTopology
-    let windows: [WindowSnapshot]
-    let updatedAt: Date
-}
-
-struct PendingRestore: Codable, Hashable, Identifiable {
+struct AnchorRecord: Codable, Hashable, Identifiable {
     let id: UUID
-    let snapshot: WindowSnapshot
-    let attempts: Int
-    let queuedAt: Date
+    var name: String
+    var anchorWindow: WindowSnapshot
+    var contextWindows: [WindowSnapshot]
+    var updatedAt: Date
+    var lastUsedAt: Date?
+    var usageCount: Int
 
-    init(snapshot: WindowSnapshot, attempts: Int = 0, queuedAt: Date = Date()) {
-        id = snapshot.id
-        self.snapshot = snapshot
-        self.attempts = attempts
-        self.queuedAt = queuedAt
-    }
-
-    func incremented() -> PendingRestore {
-        PendingRestore(snapshot: snapshot, attempts: attempts + 1, queuedAt: queuedAt)
-    }
-}
-
-struct RestoreOutcome {
-    let restoredCount: Int
-    let pending: [PendingRestore]
-    let skippedCount: Int
-    let report: RestoreReport
-
-    var summary: String {
-        "복원 \(restoredCount)개 · 보류 \(pending.count)개 · 건너뜀 \(skippedCount)개"
+    var totalWindowCount: Int {
+        1 + contextWindows.count
     }
 }
 
 struct CuePanePreferences: Codable, Hashable {
-    var autoCaptureEnabled: Bool
-    var autoRestoreEnabled: Bool
-    var captureIntervalSeconds: Double
-    var restoreDelaySeconds: Double
-    var verifyRestoreEnabled: Bool
-    var matchingMode: MatchingMode
+    var showOnboardingOnLaunch: Bool
     var excludedBundleIdentifiers: String
 
     static let `default` = CuePanePreferences(
-        autoCaptureEnabled: true,
-        autoRestoreEnabled: true,
-        captureIntervalSeconds: 4.0,
-        restoreDelaySeconds: 1.5,
-        verifyRestoreEnabled: true,
-        matchingMode: .balanced,
-        excludedBundleIdentifiers: "com.apple.finder"
+        showOnboardingOnLaunch: true,
+        excludedBundleIdentifiers: [
+            Bundle.main.bundleIdentifier ?? "dev.cuepane.app",
+            "com.apple.systemuiserver",
+            "com.apple.notificationcenterui",
+            "com.apple.controlcenter",
+            "com.apple.dock",
+        ].joined(separator: "\n")
     )
-
-    init(
-        autoCaptureEnabled: Bool,
-        autoRestoreEnabled: Bool,
-        captureIntervalSeconds: Double,
-        restoreDelaySeconds: Double,
-        verifyRestoreEnabled: Bool,
-        matchingMode: MatchingMode,
-        excludedBundleIdentifiers: String
-    ) {
-        self.autoCaptureEnabled = autoCaptureEnabled
-        self.autoRestoreEnabled = autoRestoreEnabled
-        self.captureIntervalSeconds = captureIntervalSeconds
-        self.restoreDelaySeconds = restoreDelaySeconds
-        self.verifyRestoreEnabled = verifyRestoreEnabled
-        self.matchingMode = matchingMode
-        self.excludedBundleIdentifiers = excludedBundleIdentifiers
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        self.init(
-            autoCaptureEnabled: try container.decodeIfPresent(Bool.self, forKey: .autoCaptureEnabled) ?? true,
-            autoRestoreEnabled: try container.decodeIfPresent(Bool.self, forKey: .autoRestoreEnabled) ?? true,
-            captureIntervalSeconds: try container.decodeIfPresent(Double.self, forKey: .captureIntervalSeconds) ?? 4.0,
-            restoreDelaySeconds: try container.decodeIfPresent(Double.self, forKey: .restoreDelaySeconds) ?? 1.5,
-            verifyRestoreEnabled: try container.decodeIfPresent(Bool.self, forKey: .verifyRestoreEnabled) ?? true,
-            matchingMode: try container.decodeIfPresent(MatchingMode.self, forKey: .matchingMode) ?? .balanced,
-            excludedBundleIdentifiers: try container.decodeIfPresent(String.self, forKey: .excludedBundleIdentifiers) ?? "com.apple.finder"
-        )
-    }
 
     var excludedBundleIDSet: Set<String> {
         Set(
             excludedBundleIdentifiers
-                .split(whereSeparator: \.isNewline)
+                .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
         )
@@ -368,15 +228,16 @@ struct CuePanePreferences: Codable, Hashable {
 }
 
 extension CGRect {
-    func constrained(to container: CGRect) -> CGRect {
-        guard !container.isNull, !container.isEmpty else {
+    func constrained(to bounds: CGRect) -> CGRect {
+        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else {
             return self
         }
 
-        let width = min(self.width, container.width)
-        let height = min(self.height, container.height)
-        let x = min(max(self.minX, container.minX), container.maxX - width)
-        let y = min(max(self.minY, container.minY), container.maxY - height)
-        return CGRect(x: x, y: y, width: width, height: height)
+        let width = min(max(self.width, 220), bounds.width)
+        let height = min(max(self.height, 140), bounds.height)
+        let minX = min(max(self.minX, bounds.minX), bounds.maxX - width)
+        let minY = min(max(self.minY, bounds.minY), bounds.maxY - height)
+
+        return CGRect(x: minX, y: minY, width: width, height: height)
     }
 }

@@ -16,6 +16,7 @@ struct LiveWindow {
     let displayID: String
     let windowOrder: Int
     let isFocused: Bool
+    let application: NSRunningApplication
     let element: AXUIElement
 }
 
@@ -35,66 +36,27 @@ final class WindowCatalogService {
             .flatMap { application in
                 windows(for: application, topology: topology)
             }
+            .sorted { lhs, rhs in
+                if lhs.displayID == rhs.displayID {
+                    return lhs.windowOrder < rhs.windowOrder
+                }
+                return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
+            }
     }
 
-    private func windows(for application: NSRunningApplication, topology: DisplayTopology) -> [LiveWindow] {
-        guard let bundleIdentifier = application.bundleIdentifier else {
-            return []
-        }
+    func focusedWindow(topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
+        let windows = fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
+        return windows.first(where: \.isFocused) ?? windows.first
+    }
 
-        let appElement = AXUIElementCreateApplication(application.processIdentifier)
-        let windows = arrayAttribute(kAXWindowsAttribute as CFString, from: appElement)
+    func raise(window: LiveWindow) -> Bool {
+        _ = window.application.activate(options: [.activateIgnoringOtherApps])
 
-        return windows.enumerated().compactMap { index, windowElement in
-            guard
-                let role = stringAttribute(kAXRoleAttribute as CFString, from: windowElement),
-                role == kAXWindowRole as String,
-                let position = pointAttribute(kAXPositionAttribute as CFString, from: windowElement),
-                let size = sizeAttribute(kAXSizeAttribute as CFString, from: windowElement)
-            else {
-                return nil
-            }
+        let raiseResult = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+        let mainResult = set(bool: true, attribute: kAXMainAttribute as CFString, for: window.element)
+        let focusedResult = set(bool: true, attribute: kAXFocusedAttribute as CFString, for: window.element)
 
-            let isMinimized = boolAttribute(kAXMinimizedAttribute as CFString, from: windowElement) ?? false
-            let frame = CGRect(origin: position, size: size)
-
-            guard
-                !isMinimized,
-                frame.width >= 160,
-                frame.height >= 120,
-                let displayID = displayID(for: frame, topology: topology)
-            else {
-                return nil
-            }
-
-            let title = stringAttribute(kAXTitleAttribute as CFString, from: windowElement) ?? ""
-            let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: windowElement) ?? ""
-            let metadata = WindowTitleNormalizer.metadata(
-                title: title,
-                appName: application.localizedName ?? bundleIdentifier,
-                bundleIdentifier: bundleIdentifier
-            )
-            let isFocused = boolAttribute(kAXMainAttribute as CFString, from: windowElement)
-                ?? boolAttribute(kAXFocusedAttribute as CFString, from: windowElement)
-                ?? false
-
-            return LiveWindow(
-                appName: application.localizedName ?? bundleIdentifier,
-                bundleIdentifier: bundleIdentifier,
-                title: title,
-                normalizedTitle: metadata.normalizedTitle,
-                titleTokens: metadata.titleTokens,
-                role: role,
-                subrole: subrole,
-                appKind: metadata.appKind,
-                frame: frame,
-                centerPoint: CGPoint(x: frame.midX, y: frame.midY),
-                displayID: displayID,
-                windowOrder: index,
-                isFocused: isFocused,
-                element: windowElement
-            )
-        }
+        return raiseResult == .success || mainResult == .success || focusedResult == .success
     }
 
     func move(window: LiveWindow, to targetFrame: CGRect) -> Bool {
@@ -133,6 +95,83 @@ final class WindowCatalogService {
         return CGRect(origin: position, size: size)
     }
 
+    func sameWindow(_ lhs: LiveWindow, _ rhs: LiveWindow) -> Bool {
+        CFEqual(lhs.element, rhs.element)
+    }
+
+    private func windows(for application: NSRunningApplication, topology: DisplayTopology) -> [LiveWindow] {
+        guard let bundleIdentifier = application.bundleIdentifier else {
+            return []
+        }
+
+        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        let windows = arrayAttribute(kAXWindowsAttribute as CFString, from: appElement)
+
+        return windows.enumerated().compactMap { index, windowElement in
+            guard
+                let role = stringAttribute(kAXRoleAttribute as CFString, from: windowElement),
+                role == kAXWindowRole as String,
+                let position = pointAttribute(kAXPositionAttribute as CFString, from: windowElement),
+                let size = sizeAttribute(kAXSizeAttribute as CFString, from: windowElement)
+            else {
+                return nil
+            }
+
+            let isMinimized = boolAttribute(kAXMinimizedAttribute as CFString, from: windowElement) ?? false
+            let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: windowElement) ?? ""
+            let frame = CGRect(origin: position, size: size)
+
+            guard
+                !isMinimized,
+                frame.width >= 180,
+                frame.height >= 120,
+                isStandardWindow(subrole: subrole),
+                let displayID = displayID(for: frame, topology: topology)
+            else {
+                return nil
+            }
+
+            let title = stringAttribute(kAXTitleAttribute as CFString, from: windowElement) ?? ""
+            let metadata = WindowTitleNormalizer.metadata(
+                title: title,
+                appName: application.localizedName ?? bundleIdentifier,
+                bundleIdentifier: bundleIdentifier
+            )
+            let isFocused = boolAttribute(kAXMainAttribute as CFString, from: windowElement)
+                ?? boolAttribute(kAXFocusedAttribute as CFString, from: windowElement)
+                ?? false
+
+            return LiveWindow(
+                appName: application.localizedName ?? bundleIdentifier,
+                bundleIdentifier: bundleIdentifier,
+                title: title,
+                normalizedTitle: metadata.normalizedTitle,
+                titleTokens: metadata.titleTokens,
+                role: role,
+                subrole: subrole,
+                appKind: metadata.appKind,
+                frame: frame,
+                centerPoint: CGPoint(x: frame.midX, y: frame.midY),
+                displayID: displayID,
+                windowOrder: index,
+                isFocused: isFocused,
+                application: application,
+                element: windowElement
+            )
+        }
+    }
+
+    private func isStandardWindow(subrole: String) -> Bool {
+        if subrole.isEmpty {
+            return true
+        }
+
+        return [
+            kAXStandardWindowSubrole as String,
+            kAXDialogSubrole as String,
+        ].contains(subrole)
+    }
+
     private func displayID(for frame: CGRect, topology: DisplayTopology) -> String? {
         let scoredDisplays = topology.displays.map { display -> (DisplayDescriptor, CGFloat) in
             let intersection = frame.intersection(display.frame.cgRect)
@@ -156,6 +195,7 @@ final class WindowCatalogService {
         guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
             return nil
         }
+
         return value as? String
     }
 
@@ -164,6 +204,7 @@ final class WindowCatalogService {
         guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
             return nil
         }
+
         return value as? Bool
     }
 
@@ -178,9 +219,7 @@ final class WindowCatalogService {
         }
 
         let axValue = value as! AXValue
-        guard
-            AXValueGetType(axValue) == .cgPoint
-        else {
+        guard AXValueGetType(axValue) == .cgPoint else {
             return nil
         }
 
@@ -188,6 +227,7 @@ final class WindowCatalogService {
         guard AXValueGetValue(axValue, .cgPoint, &point) else {
             return nil
         }
+
         return point
     }
 
@@ -202,9 +242,7 @@ final class WindowCatalogService {
         }
 
         let axValue = value as! AXValue
-        guard
-            AXValueGetType(axValue) == .cgSize
-        else {
+        guard AXValueGetType(axValue) == .cgSize else {
             return nil
         }
 
@@ -212,6 +250,11 @@ final class WindowCatalogService {
         guard AXValueGetValue(axValue, .cgSize, &size) else {
             return nil
         }
+
         return size
+    }
+
+    private func set(bool value: Bool, attribute: CFString, for element: AXUIElement) -> AXError {
+        AXUIElementSetAttributeValue(element, attribute, value as CFTypeRef)
     }
 }

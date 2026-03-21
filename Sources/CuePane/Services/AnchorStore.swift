@@ -1,70 +1,47 @@
+import AppKit
 import Foundation
 
-final class ProfileStore {
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
+final class AnchorStore {
+    private let fileManager = FileManager.default
+    private let directoryURL: URL
+    private let anchorsURL: URL
 
-    let baseDirectory: URL
-    let profilesDirectory: URL
-    let logsDirectory: URL
-    private let pendingDirectory: URL
-
-    init(fileManager: FileManager = .default) {
-        let supportDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    init() {
+        let baseDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-
-        baseDirectory = supportDirectory.appendingPathComponent("CuePane", isDirectory: true)
-        profilesDirectory = baseDirectory.appendingPathComponent("profiles", isDirectory: true)
-        logsDirectory = baseDirectory.appendingPathComponent("logs", isDirectory: true)
-        pendingDirectory = baseDirectory.appendingPathComponent("pending", isDirectory: true)
-
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-
-        decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        try? fileManager.createDirectory(at: profilesDirectory, withIntermediateDirectories: true)
-        try? fileManager.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
-        try? fileManager.createDirectory(at: pendingDirectory, withIntermediateDirectories: true)
+        directoryURL = baseDirectory.appendingPathComponent("CuePane", isDirectory: true)
+        anchorsURL = directoryURL.appendingPathComponent("anchors.json")
     }
 
-    func save(profile: LayoutProfile) throws {
-        let data = try encoder.encode(profile)
-        try data.write(to: profileURL(for: profile.topology.fingerprint), options: .atomic)
-    }
-
-    func loadProfile(for fingerprint: String) -> LayoutProfile? {
-        guard
-            let data = try? Data(contentsOf: profileURL(for: fingerprint)),
-            let profile = try? decoder.decode(LayoutProfile.self, from: data)
-        else {
-            return nil
-        }
-        return profile
-    }
-
-    func savePending(_ pending: [PendingRestore], for fingerprint: String) throws {
-        let data = try encoder.encode(pending)
-        try data.write(to: pendingURL(for: fingerprint), options: .atomic)
-    }
-
-    func loadPending(for fingerprint: String) -> [PendingRestore] {
-        guard
-            let data = try? Data(contentsOf: pendingURL(for: fingerprint)),
-            let pending = try? decoder.decode([PendingRestore].self, from: data)
-        else {
+    func loadAnchors() -> [AnchorRecord] {
+        guard let data = try? Data(contentsOf: anchorsURL) else {
             return []
         }
-        return pending
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([AnchorRecord].self, from: data)) ?? []
     }
 
-    private func profileURL(for fingerprint: String) -> URL {
-        profilesDirectory.appendingPathComponent("\(fingerprint).json")
+    func saveAnchors(_ anchors: [AnchorRecord]) throws {
+        try ensureDirectory()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(anchors)
+        try data.write(to: anchorsURL, options: .atomic)
     }
 
-    private func pendingURL(for fingerprint: String) -> URL {
-        pendingDirectory.appendingPathComponent("\(fingerprint).json")
+    func openStorageDirectory() {
+        try? ensureDirectory()
+        NSWorkspace.shared.open(directoryURL)
+    }
+
+    var storageDirectory: URL {
+        directoryURL
+    }
+
+    private func ensureDirectory() throws {
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
     }
 }
