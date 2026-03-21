@@ -14,31 +14,21 @@ final class ContextCaptureService {
         topology: DisplayTopology,
         excludedBundleIDs: Set<String>
     ) -> AnchorRecord? {
-        guard let display = topology.display(id: anchorWindow.displayID) ?? topology.fallbackDisplay else {
-            return nil
-        }
-
         let allWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
         let displayWindows = allWindows
             .filter { $0.displayID == anchorWindow.displayID }
             .sorted { $0.windowOrder < $1.windowOrder }
 
-        let anchorSnapshot = makeSnapshot(
-            from: anchorWindow,
-            display: display,
-            captureOrder: anchorWindow.windowOrder
-        )
+        guard let anchorSnapshot = snapshot(for: anchorWindow, topology: topology) else {
+            return nil
+        }
 
         let contextSnapshots = displayWindows.compactMap { liveWindow -> WindowSnapshot? in
             guard !windowCatalog.sameWindow(anchorWindow, liveWindow) else {
                 return nil
             }
 
-            return makeSnapshot(
-                from: liveWindow,
-                display: display,
-                captureOrder: liveWindow.windowOrder
-            )
+            return snapshot(for: liveWindow, topology: topology)
         }
 
         return AnchorRecord(
@@ -50,6 +40,14 @@ final class ContextCaptureService {
             lastUsedAt: nil,
             usageCount: 0
         )
+    }
+
+    func snapshot(for window: LiveWindow, topology: DisplayTopology) -> WindowSnapshot? {
+        guard let display = topology.display(id: window.displayID) ?? topology.fallbackDisplay else {
+            return nil
+        }
+
+        return makeSnapshot(from: window, display: display, captureOrder: window.windowOrder)
     }
 
     private func makeSnapshot(from window: LiveWindow, display: DisplayDescriptor, captureOrder: Int) -> WindowSnapshot {

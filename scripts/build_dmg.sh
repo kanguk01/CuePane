@@ -14,7 +14,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 BIN_PATH="$(swift build -c release --package-path "$REPO_ROOT" --show-bin-path)"
 EXECUTABLE_PATH="$BIN_PATH/$APP_NAME"
 DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
-SIGNING_IDENTITY="${CUEPANE_SIGNING_IDENTITY:-CuePane Local Signer}"
+SIGNING_IDENTITY="${CUEPANE_SIGNING_IDENTITY:--}"
 SIGNING_KEYCHAIN_PATH="${CUEPANE_SIGNING_KEYCHAIN_PATH:-$HOME/.cuepane-local-signing/CuePaneLocal.keychain-db}"
 
 rm -rf "$STAGE_DIR" "$DMG_PATH"
@@ -60,11 +60,17 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-CUEPANE_SIGNING_IDENTITY="$SIGNING_IDENTITY" \
-CUEPANE_SIGNING_KEYCHAIN_PATH="$SIGNING_KEYCHAIN_PATH" \
-  "$REPO_ROOT/scripts/ensure_local_signing_identity.sh" >/dev/null
+if [[ "$SIGNING_IDENTITY" != "-" ]]; then
+  CUEPANE_SIGNING_IDENTITY="$SIGNING_IDENTITY" \
+  CUEPANE_SIGNING_KEYCHAIN_PATH="$SIGNING_KEYCHAIN_PATH" \
+    "$REPO_ROOT/scripts/ensure_local_signing_identity.sh" >/dev/null
+fi
 
-codesign --force --deep --keychain "$SIGNING_KEYCHAIN_PATH" --sign "$SIGNING_IDENTITY" "$APP_DIR"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  codesign --force --deep --sign - "$APP_DIR"
+else
+  codesign --force --deep --keychain "$SIGNING_KEYCHAIN_PATH" --sign "$SIGNING_IDENTITY" "$APP_DIR"
+fi
 codesign --verify --deep --strict "$APP_DIR"
 
 ln -s /Applications "$STAGE_DIR/Applications"

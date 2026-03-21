@@ -1,6 +1,11 @@
 import AppKit
 import Foundation
 
+struct AnchorStoreLoadResult {
+    let anchors: [AnchorRecord]
+    let recoveryMessage: String?
+}
+
 final class AnchorStore {
     private let fileManager = FileManager.default
     private let directoryURL: URL
@@ -13,14 +18,26 @@ final class AnchorStore {
         anchorsURL = directoryURL.appendingPathComponent("anchors.json")
     }
 
-    func loadAnchors() -> [AnchorRecord] {
+    func loadAnchors() -> AnchorStoreLoadResult {
         guard let data = try? Data(contentsOf: anchorsURL) else {
-            return []
+            return AnchorStoreLoadResult(anchors: [], recoveryMessage: nil)
         }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([AnchorRecord].self, from: data)) ?? []
+
+        do {
+            let anchors = try decoder.decode([AnchorRecord].self, from: data)
+            return AnchorStoreLoadResult(anchors: anchors, recoveryMessage: nil)
+        } catch {
+            let backupURL = quarantineCorruptedStore()
+            let message = if let backupURL {
+                "저장소를 읽지 못해 \(backupURL.lastPathComponent)로 백업했습니다"
+            } else {
+                "저장소를 읽지 못해 빈 상태로 시작했습니다"
+            }
+            return AnchorStoreLoadResult(anchors: [], recoveryMessage: message)
+        }
     }
 
     func saveAnchors(_ anchors: [AnchorRecord]) throws {
@@ -39,6 +56,21 @@ final class AnchorStore {
 
     var storageDirectory: URL {
         directoryURL
+    }
+
+    private func quarantineCorruptedStore() -> URL? {
+        try? ensureDirectory()
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backupURL = directoryURL.appendingPathComponent("anchors-corrupted-\(formatter.string(from: Date())).json")
+
+        do {
+            try fileManager.moveItem(at: anchorsURL, to: backupURL)
+            return backupURL
+        } catch {
+            return nil
+        }
     }
 
     private func ensureDirectory() throws {

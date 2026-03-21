@@ -46,11 +46,19 @@ final class WindowCatalogService {
 
     func focusedWindow(topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
         let windows = fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
-        return windows.first(where: \.isFocused) ?? windows.first
+        if let focused = windows.first(where: \.isFocused) {
+            return focused
+        }
+
+        guard let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+            return nil
+        }
+
+        return windows.first(where: { $0.bundleIdentifier == frontmostBundleID })
     }
 
     func raise(window: LiveWindow) -> Bool {
-        _ = window.application.activate(options: [.activateIgnoringOtherApps])
+        _ = window.application.activate(options: [])
 
         let raiseResult = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
         let mainResult = set(bool: true, attribute: kAXMainAttribute as CFString, for: window.element)

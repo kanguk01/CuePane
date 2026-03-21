@@ -33,7 +33,7 @@ final class AppModel: ObservableObject {
     private lazy var recallCoordinator = RecallCoordinator(windowCatalog: windowCatalog)
 
     private var didStart = false
-    private var namingTargetWindow: LiveWindow?
+    private var namingTargetSnapshot: WindowSnapshot?
     private var namingAnchorID: UUID?
     private var showSearchAction: (() -> Void)?
     private var dismissSearchAction: (() -> Void)?
@@ -51,7 +51,13 @@ final class AppModel: ObservableObject {
             preferences = .default
         }
 
-        anchors = sortedAnchors(anchorStore.loadAnchors())
+        let loadResult = anchorStore.loadAnchors()
+        anchors = sortedAnchors(loadResult.anchors)
+        if let recoveryMessage = loadResult.recoveryMessage {
+            lastActionSummary = recoveryMessage
+        } else if !anchors.isEmpty {
+            lastActionSummary = "\(anchors.count)개 앵커를 불러왔습니다"
+        }
     }
 
     func configureWindowActions(
@@ -193,21 +199,31 @@ final class AppModel: ObservableObject {
             return
         }
 
-        namingTargetWindow = focusedWindow
-        namingAnchorID = matchingRecord(for: focusedWindow)?.id
+        guard let targetSnapshot = captureService.snapshot(for: focusedWindow, topology: topology) else {
+            lastActionSummary = "현재 윈도우 스냅샷을 만들지 못했습니다"
+            return
+        }
+
+        let matchedRecord = matchingRecord(for: focusedWindow)
+        namingTargetSnapshot = targetSnapshot
+        namingAnchorID = matchedRecord?.id
         editingExistingAnchor = namingAnchorID != nil
-        namingDraft = matchingRecord(for: focusedWindow)?.name ?? suggestedName(for: focusedWindow)
+        namingDraft = matchedRecord?.name ?? suggestedName(for: focusedWindow)
         namingTargetDescription = summary(for: focusedWindow)
         namingPreviewCount = max(1, liveWindows(on: focusedWindow.displayID, topology: topology).count)
         showNamingAction?()
     }
 
     func dismissNaming() {
+        namingTargetSnapshot = nil
+        namingAnchorID = nil
+        editingExistingAnchor = false
         dismissNamingAction?()
     }
 
     func saveNamingDraft() {
-        guard let namingTargetWindow else {
+        let topology = DisplayTopology.current()
+        guard let liveNamingTarget = resolveNamingTargetWindow(topology: topology) else {
             lastActionSummary = "저장할 윈도우가 없습니다"
             return
         }
@@ -218,11 +234,10 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let topology = DisplayTopology.current()
         guard let captured = captureService.captureAnchor(
             id: namingAnchorID,
             name: trimmedName,
-            anchorWindow: namingTargetWindow,
+            anchorWindow: liveNamingTarget,
             topology: topology,
             excludedBundleIDs: preferences.excludedBundleIDSet
         ) else {
@@ -264,7 +279,7 @@ final class AppModel: ObservableObject {
             excludedBundleIDs: preferences.excludedBundleIDSet
         )
 
-        if let index = anchors.firstIndex(where: { $0.id == record.id }) {
+        if result.raisedCount > 0, let index = anchors.firstIndex(where: { $0.id == record.id }) {
             anchors[index].lastUsedAt = Date()
             anchors[index].usageCount += 1
             anchors[index].updatedAt = max(anchors[index].updatedAt, Date())
@@ -273,7 +288,9 @@ final class AppModel: ObservableObject {
         persistAnchors()
         refreshCatalogSnapshot()
         lastActionSummary = result.summary
-        dismissSearch()
+        if result.raisedCount > 0 {
+            dismissSearch()
+        }
     }
 
     func updateContext(for record: AnchorRecord) {
@@ -358,10 +375,19 @@ final class AppModel: ObservableObject {
     }
 
     private func matchingRecord(for liveWindow: LiveWindow) -> AnchorRecord? {
-        anchors.first { record in
-            record.anchorWindow.bundleIdentifier == liveWindow.bundleIdentifier &&
-            record.anchorWindow.normalizedTitle == liveWindow.normalizedTitle
+        recallCoordinator.bestRecord(for: liveWindow, records: anchors)
+    }
+
+    private func resolveNamingTargetWindow(topology: DisplayTopology) -> LiveWindow? {
+        guard let namingTargetSnapshot else {
+            return nil
         }
+
+        return recallCoordinator.captureTarget(
+            for: namingTargetSnapshot,
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet
+        )
     }
 
     private func suggestedName(for liveWindow: LiveWindow) -> String {

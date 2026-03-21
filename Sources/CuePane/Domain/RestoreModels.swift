@@ -49,20 +49,40 @@ struct RecallResult: Hashable {
     let destination: RecallDestination
     let requestedCount: Int
     let matchedCount: Int
+    let raisedCount: Int
     let movedCount: Int
     let unresolvedTitles: [String]
+    let moveFailedTitles: [String]
+    let raiseFailedTitles: [String]
 
     var summary: String {
-        let unresolvedSummary: String
+        var components: [String] = [
+            anchorName,
+            mode.title,
+            "활성 \(raisedCount)/\(requestedCount)"
+        ]
 
-        if unresolvedTitles.isEmpty {
-            unresolvedSummary = "모든 창 매칭"
-        } else {
-            unresolvedSummary = "미매칭 \(unresolvedTitles.count)개"
+        if destination == .currentDisplay {
+            components.append("이동 \(movedCount)개")
         }
 
-        let moveSummary = destination == .currentDisplay ? " · 이동 \(movedCount)개" : ""
-        return "\(anchorName) · \(mode.title) · 복원 \(matchedCount)/\(requestedCount)\(moveSummary) · \(unresolvedSummary)"
+        if !unresolvedTitles.isEmpty {
+            components.append("미매칭 \(unresolvedTitles.count)개")
+        }
+
+        if !moveFailedTitles.isEmpty {
+            components.append("이동 실패 \(moveFailedTitles.count)개")
+        }
+
+        if !raiseFailedTitles.isEmpty {
+            components.append("포커스 실패 \(raiseFailedTitles.count)개")
+        }
+
+        if matchedCount == requestedCount && raiseFailedTitles.isEmpty && moveFailedTitles.isEmpty {
+            components.append("완료")
+        }
+
+        return components.joined(separator: " · ")
     }
 }
 
