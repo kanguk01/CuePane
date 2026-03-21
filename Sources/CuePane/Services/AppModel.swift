@@ -54,7 +54,7 @@ final class AppModel: ObservableObject {
         }
 
         let loadResult = anchorStore.loadAnchors()
-        anchors = sortedAnchors(loadResult.anchors)
+        anchors = AnchorRecordUtilities.sort(loadResult.anchors)
         if let recoveryMessage = loadResult.recoveryMessage {
             lastActionSummary = recoveryMessage
         } else if !anchors.isEmpty {
@@ -109,7 +109,7 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() {
-        persistAnchors()
+        try? anchorStore.saveAnchors(anchors)
     }
 
     var anchorCount: Int {
@@ -129,7 +129,7 @@ final class AppModel: ObservableObject {
     }
 
     var lastUsedPresentation: AnchorPresentation? {
-        presentations.first(where: { $0.record.lastUsedAt != nil })
+        AnchorRecordUtilities.mostRecentlyUsedPresentation(in: presentations)
     }
 
     var namingTitle: String {
@@ -295,10 +295,12 @@ final class AppModel: ObservableObject {
                 return
             }
 
-            anchors[index].name = trimmedName
-            anchors[index].updatedAt = Date()
-            persistAnchors()
-            refreshCatalogSnapshot()
+            var updatedAnchors = anchors
+            updatedAnchors[index].name = trimmedName
+            updatedAnchors[index].updatedAt = Date()
+            guard commitAnchors(updatedAnchors) else {
+                return
+            }
             lastActionSummary = "\(trimmedName) · 앵커 이름을 수정했습니다"
             dismissNaming()
             return
@@ -328,9 +330,9 @@ final class AppModel: ObservableObject {
             finalRecord.isFavorite = previous.isFavorite
         }
 
-        upsert(finalRecord)
-        persistAnchors()
-        refreshCatalogSnapshot()
+        guard commitAnchors(upserting(finalRecord, into: anchors)) else {
+            return
+        }
         lastActionSummary = "\(trimmedName) · 같은 모니터 \(finalRecord.totalWindowCount)개 창 저장"
         dismissNaming()
     }
@@ -357,13 +359,18 @@ final class AppModel: ObservableObject {
         )
 
         if result.raisedCount > 0, let index = anchors.firstIndex(where: { $0.id == record.id }) {
-            anchors[index].lastUsedAt = Date()
-            anchors[index].usageCount += 1
-            anchors[index].updatedAt = max(anchors[index].updatedAt, Date())
-        }
+            var updatedAnchors = anchors
+            updatedAnchors[index].lastUsedAt = Date()
+            updatedAnchors[index].usageCount += 1
+            updatedAnchors[index].updatedAt = max(updatedAnchors[index].updatedAt, Date())
 
-        persistAnchors()
-        refreshCatalogSnapshot()
+            if !commitAnchors(updatedAnchors) {
+                lastActionSummary = "\(result.summary) · 사용 기록 저장 실패"
+                return
+            }
+        } else {
+            refreshCatalogSnapshot()
+        }
         lastActionSummary = result.summary
         if result.raisedCount > 0 {
             dismissSearch()
@@ -404,9 +411,9 @@ final class AppModel: ObservableObject {
         updatedRecord.lastUsedAt = record.lastUsedAt
         updatedRecord.usageCount = record.usageCount
         updatedRecord.isFavorite = record.isFavorite
-        upsert(updatedRecord)
-        persistAnchors()
-        refreshCatalogSnapshot()
+        guard commitAnchors(upserting(updatedRecord, into: anchors)) else {
+            return
+        }
         lastActionSummary = "\(record.name) · 문맥을 현재 상태로 업데이트했습니다"
     }
 
@@ -415,21 +422,23 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let isFavorite = !anchors[index].isFavorite
-        anchors[index].isFavorite = isFavorite
-        anchors[index].updatedAt = Date()
-        anchors = sortedAnchors(anchors)
-        persistAnchors()
-        refreshCatalogSnapshot()
+        var updatedAnchors = anchors
+        let isFavorite = !updatedAnchors[index].isFavorite
+        updatedAnchors[index].isFavorite = isFavorite
+        updatedAnchors[index].updatedAt = Date()
+        guard commitAnchors(updatedAnchors) else {
+            return
+        }
         lastActionSummary = isFavorite
             ? "\(record.name) · 즐겨찾기에 고정했습니다"
             : "\(record.name) · 즐겨찾기에서 해제했습니다"
     }
 
     func delete(_ record: AnchorRecord) {
-        anchors.removeAll { $0.id == record.id }
-        persistAnchors()
-        refreshCatalogSnapshot()
+        let updatedAnchors = anchors.filter { $0.id != record.id }
+        guard commitAnchors(updatedAnchors) else {
+            return
+        }
         lastActionSummary = "\(record.name) 앵커를 삭제했습니다"
     }
 
@@ -463,10 +472,11 @@ final class AppModel: ObservableObject {
 
         do {
             let imported = try anchorStore.importAnchors(from: url)
-            let mergedCount = mergeImportedAnchors(imported)
-            persistAnchors()
-            refreshCatalogSnapshot()
-            lastActionSummary = "앵커 \(mergedCount)개를 가져왔습니다"
+            let mergeResult = mergeImportedAnchors(imported, into: anchors)
+            guard commitAnchors(mergeResult.records) else {
+                return
+            }
+            lastActionSummary = "앵커 \(mergeResult.mergedCount)개를 가져왔습니다"
         } catch {
             lastActionSummary = "가져오기 실패: \(error.localizedDescription)"
         }
@@ -542,21 +552,32 @@ final class AppModel: ObservableObject {
         return "\(snapshot.appName) · \(title)"
     }
 
-    private func upsert(_ record: AnchorRecord) {
-        if let index = anchors.firstIndex(where: { $0.id == record.id }) {
-            anchors[index] = record
+    private func upserting(_ record: AnchorRecord, into records: [AnchorRecord]) -> [AnchorRecord] {
+        var updatedRecords = records
+
+        if let index = updatedRecords.firstIndex(where: { $0.id == record.id }) {
+            updatedRecords[index] = record
         } else {
-            anchors.append(record)
+            updatedRecords.append(record)
         }
 
-        anchors = sortedAnchors(anchors)
+        return AnchorRecordUtilities.sort(updatedRecords)
     }
 
-    private func persistAnchors() {
+    @discardableResult
+    private func commitAnchors(_ updatedRecords: [AnchorRecord]) -> Bool {
+        let previousRecords = anchors
+        anchors = AnchorRecordUtilities.sort(updatedRecords)
+
         do {
             try anchorStore.saveAnchors(anchors)
+            refreshCatalogSnapshot()
+            return true
         } catch {
+            anchors = previousRecords
+            refreshCatalogSnapshot()
             lastActionSummary = "앵커 저장 실패: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -567,55 +588,45 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func mergeImportedAnchors(_ importedAnchors: [AnchorRecord]) -> Int {
+    private func mergeImportedAnchors(_ importedAnchors: [AnchorRecord], into records: [AnchorRecord]) -> (records: [AnchorRecord], mergedCount: Int) {
+        var mergedRecords = records
         var mergedCount = 0
 
         for imported in importedAnchors {
-            if let index = anchors.firstIndex(where: { $0.id == imported.id }) {
-                anchors[index] = imported
+            if let index = mergedRecords.firstIndex(where: { $0.id == imported.id }) {
+                mergedRecords[index] = AnchorRecordUtilities.preferredRecord(
+                    existing: mergedRecords[index],
+                    incoming: imported
+                )
                 mergedCount += 1
                 continue
             }
 
-            if let index = anchors.firstIndex(where: {
+            if let index = mergedRecords.firstIndex(where: {
                 $0.name == imported.name &&
                 $0.anchorWindow.bundleIdentifier == imported.anchorWindow.bundleIdentifier &&
                 $0.anchorWindow.normalizedTitle == imported.anchorWindow.normalizedTitle
             }) {
-                anchors[index] = imported
+                mergedRecords[index] = AnchorRecordUtilities.preferredRecord(
+                    existing: mergedRecords[index],
+                    incoming: imported
+                )
                 mergedCount += 1
                 continue
             }
 
-            anchors.append(imported)
+            mergedRecords.append(imported)
             mergedCount += 1
         }
 
-        anchors = sortedAnchors(anchors)
-        return mergedCount
+        return (AnchorRecordUtilities.sort(mergedRecords), mergedCount)
     }
 
     private func sortedAnchors(_ records: [AnchorRecord]) -> [AnchorRecord] {
-        records.sorted { lhs, rhs in
-            if lhs.isFavorite != rhs.isFavorite {
-                return lhs.isFavorite && !rhs.isFavorite
-            }
-            if lhs.lastUsedAt == rhs.lastUsedAt {
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            return (lhs.lastUsedAt ?? .distantPast) > (rhs.lastUsedAt ?? .distantPast)
-        }
+        AnchorRecordUtilities.sort(records)
     }
 
     private func sortedPresentations(_ presentations: [AnchorPresentation]) -> [AnchorPresentation] {
-        presentations.sorted { lhs, rhs in
-            if lhs.record.isFavorite != rhs.record.isFavorite {
-                return lhs.record.isFavorite && !rhs.record.isFavorite
-            }
-            if lhs.record.lastUsedAt == rhs.record.lastUsedAt {
-                return lhs.record.updatedAt > rhs.record.updatedAt
-            }
-            return (lhs.record.lastUsedAt ?? .distantPast) > (rhs.record.lastUsedAt ?? .distantPast)
-        }
+        AnchorRecordUtilities.sort(presentations)
     }
 }
