@@ -16,7 +16,7 @@ struct CuePaneApp: App {
             Image(
                 nsImage: MenuBarIconRenderer.makeImage(
                     accessibilityGranted: appModel.accessibilityGranted,
-                    pendingRestoreCount: appModel.pendingRestoreCount
+                    anchorCount: appModel.anchorCount
                 )
             )
             .onAppear { bootstrapIfNeeded() }
@@ -37,7 +37,10 @@ struct CuePaneApp: App {
         didBootstrap = true
         appDelegate.attach(appModel: appModel)
         appModel.configureWindowActions(
-            showDiagnostics: { windowCoordinator.showDiagnostics(appModel: appModel) },
+            showSearch: { windowCoordinator.showSearch(appModel: appModel) },
+            dismissSearch: { windowCoordinator.dismissSearch() },
+            showNaming: { windowCoordinator.showNaming(appModel: appModel) },
+            dismissNaming: { windowCoordinator.dismissNaming() },
             showOnboarding: { windowCoordinator.showOnboarding(appModel: appModel) }
         )
         appModel.start()
