@@ -45,6 +45,7 @@ swift run CuePane
 ```
 
 DMG는 `/Users/kanguklee/CuePane/dist/CuePane.dmg`에 생성됩니다.
+기본값은 로컬 ad-hoc 서명이고, 별도 인증서로 서명하려면 `CUEPANE_SIGNING_IDENTITY`를 지정하면 됩니다.
 
 아이콘만 다시 생성하려면:
 

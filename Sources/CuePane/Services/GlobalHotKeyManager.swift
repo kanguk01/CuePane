@@ -27,10 +27,6 @@ enum GlobalHotKeyAction: UInt32, CaseIterable {
     fileprivate var carbonModifiers: UInt32 {
         UInt32(cmdKey | shiftKey)
     }
-
-    fileprivate var nsKeyCode: UInt16 {
-        UInt16(carbonKeyCode)
-    }
 }
 
 final class GlobalHotKeyManager {
@@ -40,13 +36,9 @@ final class GlobalHotKeyManager {
 
     private var hotKeyRefs: [GlobalHotKeyAction: EventHotKeyRef] = [:]
     private var carbonEventHandler: EventHandlerRef?
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
-
     func register() {
         registerCarbonHotKeys()
         installCarbonHandler()
-        installEventMonitors()
     }
 
     deinit {
@@ -56,13 +48,6 @@ final class GlobalHotKeyManager {
             RemoveEventHandler(carbonEventHandler)
         }
 
-        if let globalMonitor {
-            NSEvent.removeMonitor(globalMonitor)
-        }
-
-        if let localMonitor {
-            NSEvent.removeMonitor(localMonitor)
-        }
     }
 
     private func registerCarbonHotKeys() {
@@ -136,35 +121,4 @@ final class GlobalHotKeyManager {
         )
     }
 
-    private func installEventMonitors() {
-        guard globalMonitor == nil else {
-            return
-        }
-
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            _ = self?.handleKeyDown(event)
-        }
-
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if self?.handleKeyDown(event) == true {
-                return nil
-            }
-            return event
-        }
-    }
-
-    @discardableResult
-    private func handleKeyDown(_ event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers == [.command, .shift] else {
-            return false
-        }
-
-        guard let action = GlobalHotKeyAction.allCases.first(where: { $0.nsKeyCode == event.keyCode }) else {
-            return false
-        }
-
-        onAction?(action)
-        return true
-    }
 }

@@ -20,14 +20,20 @@ final class RecallCoordinator {
     }
 
     func bestRecord(for liveWindow: LiveWindow, records: [AnchorRecord]) -> AnchorRecord? {
-        records.max { lhs, rhs in
-            score(snapshot: lhs.anchorWindow, window: liveWindow) < score(snapshot: rhs.anchorWindow, window: liveWindow)
+        let candidates = records.map { ($0, score(snapshot: $0.anchorWindow, window: liveWindow)) }
+        guard let best = candidates.max(by: { $0.1 < $1.1 }), best.1 >= 48 else {
+            return nil
         }
+        return best.0
     }
 
     func captureTarget(for record: AnchorRecord, topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
+        captureTarget(for: record.anchorWindow, topology: topology, excludedBundleIDs: excludedBundleIDs)
+    }
+
+    func captureTarget(for snapshot: WindowSnapshot, topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
         let liveWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
-        return bestMatch(for: record.anchorWindow, windows: liveWindows)?.window
+        return bestMatch(for: snapshot, windows: liveWindows)?.window
     }
 
     func recall(
@@ -41,9 +47,12 @@ final class RecallCoordinator {
 
         let snapshots = orderedSnapshots(for: record, mode: request.mode)
         var matchedCount = 0
+        var raisedCount = 0
         var movedCount = 0
         var unresolvedTitles: [String] = []
-        var pendingRaise: [LiveWindow] = []
+        var moveFailedTitles: [String] = []
+        var raiseFailedTitles: [String] = []
+        var pendingRaise: [(LiveWindow, String)] = []
 
         for snapshot in snapshots {
             guard let match = bestMatch(for: snapshot, windows: liveWindows) else {
@@ -57,15 +66,21 @@ final class RecallCoordinator {
                 let targetFrame = snapshot.normalizedFrame.denormalized(in: targetDisplay.visibleFrame.cgRect)
                 if windowCatalog.move(window: liveWindow, to: targetFrame) {
                     movedCount += 1
+                } else {
+                    moveFailedTitles.append(snapshot.title.isEmpty ? snapshot.appName : snapshot.title)
                 }
             }
 
-            pendingRaise.append(liveWindow)
+            pendingRaise.append((liveWindow, snapshot.title.isEmpty ? snapshot.appName : snapshot.title))
             matchedCount += 1
         }
 
-        for liveWindow in pendingRaise {
-            _ = windowCatalog.raise(window: liveWindow)
+        for (liveWindow, title) in pendingRaise {
+            if windowCatalog.raise(window: liveWindow) {
+                raisedCount += 1
+            } else {
+                raiseFailedTitles.append(title)
+            }
         }
 
         return RecallResult(
@@ -75,8 +90,11 @@ final class RecallCoordinator {
             destination: request.destination,
             requestedCount: snapshots.count,
             matchedCount: matchedCount,
+            raisedCount: raisedCount,
             movedCount: movedCount,
-            unresolvedTitles: unresolvedTitles
+            unresolvedTitles: unresolvedTitles,
+            moveFailedTitles: moveFailedTitles,
+            raiseFailedTitles: raiseFailedTitles
         )
     }
 
