@@ -62,9 +62,24 @@ final class WindowCatalogService {
             }
     }
 
-    func focusedWindow(topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
+    func focusedWindow(
+        topology: DisplayTopology,
+        excludedBundleIDs: Set<String>,
+        preferredProcessIdentifier: pid_t? = nil
+    ) -> LiveWindow? {
         guard AXIsProcessTrusted() else {
             return nil
+        }
+
+        if
+            let preferredProcessIdentifier,
+            let preferredWindow = focusedWindow(
+                for: preferredProcessIdentifier,
+                topology: topology,
+                excludedBundleIDs: excludedBundleIDs
+            )
+        {
+            return preferredWindow
         }
 
         if let focusedWindow = systemWideFocusedWindow(
@@ -245,6 +260,51 @@ final class WindowCatalogService {
         }
 
         return application
+    }
+
+    private func focusedWindow(
+        for processIdentifier: pid_t,
+        topology: DisplayTopology,
+        excludedBundleIDs: Set<String>
+    ) -> LiveWindow? {
+        guard
+            let application = NSRunningApplication(processIdentifier: processIdentifier),
+            application.activationPolicy == .regular,
+            !application.isTerminated,
+            let bundleIdentifier = application.bundleIdentifier,
+            bundleIdentifier != Bundle.main.bundleIdentifier,
+            !excludedBundleIDs.contains(bundleIdentifier)
+        else {
+            return nil
+        }
+
+        let windows = windows(
+            for: application,
+            topology: topology,
+            onScreenWindows: onScreenWindowReferences()
+        )
+
+        if
+            let focusedElement = applicationWindowAttribute(
+                kAXFocusedWindowAttribute as CFString,
+                for: application
+            ),
+            let focusedWindow = windows.first(where: { CFEqual($0.element, focusedElement) })
+        {
+            return focusedWindow
+        }
+
+        if
+            let mainElement = applicationWindowAttribute(
+                kAXMainWindowAttribute as CFString,
+                for: application
+            ),
+            let mainWindow = windows.first(where: { CFEqual($0.element, mainElement) })
+        {
+            return mainWindow
+        }
+
+        return windows.first(where: \.isFocused) ?? windows.first
     }
 
     private func windows(

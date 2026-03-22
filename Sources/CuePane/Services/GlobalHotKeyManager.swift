@@ -32,7 +32,7 @@ enum GlobalHotKeyAction: UInt32, CaseIterable {
 final class GlobalHotKeyManager {
     private static let hotKeySignature = OSType(0x43504531)
 
-    var onAction: ((GlobalHotKeyAction) -> Void)?
+    var onAction: ((GlobalHotKeyAction, pid_t?) -> Void)?
 
     private var hotKeyRefs: [GlobalHotKeyAction: EventHotKeyRef] = [:]
     private var carbonEventHandler: EventHandlerRef?
@@ -111,7 +111,7 @@ final class GlobalHotKeyManager {
                 }
 
                 let manager = Unmanaged<GlobalHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-                manager.onAction?(action)
+                manager.onAction?(action, manager.focusedProcessIdentifier())
                 return noErr
             },
             1,
@@ -121,4 +121,24 @@ final class GlobalHotKeyManager {
         )
     }
 
+    private func focusedProcessIdentifier() -> pid_t? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var value: CFTypeRef?
+
+        guard
+            AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &value) == .success,
+            let value,
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+
+        let appElement = value as! AXUIElement
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(appElement, &processIdentifier) == .success else {
+            return nil
+        }
+
+        return processIdentifier
+    }
 }

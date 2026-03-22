@@ -38,6 +38,7 @@ final class AppModel: ObservableObject {
     private lazy var recallCoordinator = RecallCoordinator(windowCatalog: windowCatalog)
 
     private var didStart = false
+    private var pendingHotKeyFocusedPID: pid_t?
     private var namingTargetSnapshot: WindowSnapshot?
     private var namingContextSnapshots: [WindowSnapshot] = []
     private var namingAnchorID: UUID?
@@ -95,12 +96,13 @@ final class AppModel: ObservableObject {
         didStart = true
         refreshAccessibility(prompt: false)
         refreshCatalogSnapshot()
-        hotKeyManager.onAction = { [weak self] action in
+        hotKeyManager.onAction = { [weak self] action, focusedProcessIdentifier in
             guard let self else {
                 return
             }
 
             Task { @MainActor in
+                self.pendingHotKeyFocusedPID = focusedProcessIdentifier
                 switch action {
                 case .toggleSearch:
                     self.openSearch()
@@ -267,6 +269,8 @@ final class AppModel: ObservableObject {
     }
 
     func beginNamingCurrentWindow() {
+        let preferredProcessIdentifier = pendingHotKeyFocusedPID
+        pendingHotKeyFocusedPID = nil
         resetNamingSession(clearDraft: true)
         recordDebug("이름 패널 열기 요청")
         refreshAccessibility(prompt: false)
@@ -282,10 +286,11 @@ final class AppModel: ObservableObject {
         let topology = DisplayTopology.current()
         guard let focusedWindow = windowCatalog.focusedWindow(
             topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet
+            excludedBundleIDs: preferences.excludedBundleIDSet,
+            preferredProcessIdentifier: preferredProcessIdentifier
         ) else {
             namingTargetDescription = "현재 활성 윈도우를 찾지 못했습니다"
-            recordDebug("이름 패널 중단 · 현재 활성 윈도우 없음")
+            recordDebug("이름 패널 중단 · 현재 활성 윈도우 없음 · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음")")
             lastActionSummary = "현재 활성 윈도우를 찾지 못했습니다"
             return
         }
@@ -315,7 +320,7 @@ final class AppModel: ObservableObject {
         namingPreviewCount = 1 + namingContextSnapshots.count
         refreshDebugCapturedWindows(target: targetSnapshot, context: namingContextSnapshots)
         recordDebug(
-            "이름 패널 준비 · 대상 \(debugSummary(for: focusedWindow)) · 기존 앵커 \(matchedRecord?.name ?? "없음") · 저장 예정 \(namingPreviewCount)개"
+            "이름 패널 준비 · 대상 \(debugSummary(for: focusedWindow)) · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음") · 기존 앵커 \(matchedRecord?.name ?? "없음") · 저장 예정 \(namingPreviewCount)개"
         )
         showNamingAction?()
     }
