@@ -14,7 +14,11 @@ final class ContextCaptureService {
         topology: DisplayTopology,
         excludedBundleIDs: Set<String>
     ) -> AnchorRecord? {
-        let allWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
+        let allWindows = windowCatalog.fetchWindows(
+            topology: topology,
+            excludedBundleIDs: excludedBundleIDs,
+            scope: .visibleOnly
+        )
         let displayWindows = allWindows
             .filter { $0.displayID == anchorWindow.displayID }
             .sorted { $0.windowOrder < $1.windowOrder }

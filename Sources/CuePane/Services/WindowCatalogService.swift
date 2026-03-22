@@ -20,11 +20,29 @@ struct LiveWindow {
     let element: AXUIElement
 }
 
+enum WindowInventoryScope {
+    case all
+    case visibleOnly
+}
+
 final class WindowCatalogService {
-    func fetchWindows(topology: DisplayTopology, excludedBundleIDs: Set<String>) -> [LiveWindow] {
+    private struct OnScreenWindowReference {
+        let ownerPID: pid_t
+        let title: String
+        let normalizedTitle: String
+        let bounds: CGRect
+    }
+
+    func fetchWindows(
+        topology: DisplayTopology,
+        excludedBundleIDs: Set<String>,
+        scope: WindowInventoryScope = .all
+    ) -> [LiveWindow] {
         guard AXIsProcessTrusted() else {
             return []
         }
+
+        let onScreenWindows = scope == .visibleOnly ? onScreenWindowReferences() : nil
 
         return NSWorkspace.shared.runningApplications
             .filter { app in
@@ -34,7 +52,7 @@ final class WindowCatalogService {
                 !excludedBundleIDs.contains(app.bundleIdentifier ?? "")
             }
             .flatMap { application in
-                windows(for: application, topology: topology)
+                windows(for: application, topology: topology, onScreenWindows: onScreenWindows)
             }
             .sorted { lhs, rhs in
                 if lhs.displayID == rhs.displayID {
@@ -50,7 +68,11 @@ final class WindowCatalogService {
         }
 
         if let frontmostApp = eligibleFrontmostApplication(excludedBundleIDs: excludedBundleIDs) {
-            let frontmostWindows = windows(for: frontmostApp, topology: topology)
+            let frontmostWindows = windows(
+                for: frontmostApp,
+                topology: topology,
+                onScreenWindows: onScreenWindowReferences()
+            )
 
             if
                 let focusedElement = applicationWindowAttribute(
@@ -155,7 +177,11 @@ final class WindowCatalogService {
         return application
     }
 
-    private func windows(for application: NSRunningApplication, topology: DisplayTopology) -> [LiveWindow] {
+    private func windows(
+        for application: NSRunningApplication,
+        topology: DisplayTopology,
+        onScreenWindows: [OnScreenWindowReference]?
+    ) -> [LiveWindow] {
         guard let bundleIdentifier = application.bundleIdentifier else {
             return []
         }
@@ -188,6 +214,18 @@ final class WindowCatalogService {
             }
 
             let title = stringAttribute(kAXTitleAttribute as CFString, from: windowElement) ?? ""
+            if let onScreenWindows {
+                guard isOnScreenWindow(
+                    ownerPID: application.processIdentifier,
+                    title: title,
+                    frame: frame,
+                    appName: application.localizedName ?? bundleIdentifier,
+                    onScreenWindows: onScreenWindows
+                ) else {
+                    return nil
+                }
+            }
+
             let metadata = WindowTitleNormalizer.metadata(
                 title: title,
                 appName: application.localizedName ?? bundleIdentifier,
@@ -235,6 +273,119 @@ final class WindowCatalogService {
         }
 
         return scoredDisplays.max(by: { lhs, rhs in lhs.1 < rhs.1 })?.0.id ?? topology.fallbackDisplay?.id
+    }
+
+    private func onScreenWindowReferences() -> [OnScreenWindowReference] {
+        guard
+            let rawWindowList = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID
+            ) as? [[String: Any]]
+        else {
+            return []
+        }
+
+        return rawWindowList.compactMap { entry in
+            let layer = entry[kCGWindowLayer as String] as? Int ?? 0
+            let alpha = entry[kCGWindowAlpha as String] as? Double ?? 1
+
+            guard
+                layer == 0,
+                alpha > 0.01,
+                let ownerPID = entry[kCGWindowOwnerPID as String] as? pid_t ?? (entry[kCGWindowOwnerPID as String] as? Int).map(pid_t.init),
+                let boundsDictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
+            else {
+                return nil
+            }
+
+            let title = entry[kCGWindowName as String] as? String ?? ""
+            let ownerName = entry[kCGWindowOwnerName as String] as? String ?? ""
+            return OnScreenWindowReference(
+                ownerPID: ownerPID,
+                title: title,
+                normalizedTitle: WindowTitleNormalizer.normalizedTitle(
+                    title: title,
+                    appName: ownerName,
+                    bundleIdentifier: ""
+                ),
+                bounds: bounds
+            )
+        }
+    }
+
+    private func isOnScreenWindow(
+        ownerPID: pid_t,
+        title: String,
+        frame: CGRect,
+        appName: String,
+        onScreenWindows: [OnScreenWindowReference]
+    ) -> Bool {
+        guard !onScreenWindows.isEmpty else {
+            return true
+        }
+
+        let normalizedTitle = WindowTitleNormalizer.normalizedTitle(
+            title: title,
+            appName: appName,
+            bundleIdentifier: ""
+        )
+        let candidates = onScreenWindows.filter { $0.ownerPID == ownerPID }
+        guard !candidates.isEmpty else {
+            return false
+        }
+
+        let bestScore = candidates.map { candidate in
+            score(frame: frame, normalizedTitle: normalizedTitle, candidate: candidate)
+        }.max() ?? 0
+
+        return bestScore >= 52
+    }
+
+    private func score(frame: CGRect, normalizedTitle: String, candidate: OnScreenWindowReference) -> Int {
+        var score = 0
+
+        if !normalizedTitle.isEmpty && normalizedTitle == candidate.normalizedTitle {
+            score += 44
+        } else if
+            !normalizedTitle.isEmpty &&
+            !candidate.normalizedTitle.isEmpty &&
+            (normalizedTitle.contains(candidate.normalizedTitle) || candidate.normalizedTitle.contains(normalizedTitle))
+        {
+            score += 28
+        } else if normalizedTitle.isEmpty && candidate.normalizedTitle.isEmpty {
+            score += 12
+        }
+
+        let intersection = frame.intersection(candidate.bounds)
+        let intersectionArea = intersection.isNull ? 0 : intersection.width * intersection.height
+        let frameArea = max(frame.width * frame.height, 1)
+        let candidateArea = max(candidate.bounds.width * candidate.bounds.height, 1)
+        let overlapRatio = intersectionArea / min(frameArea, candidateArea)
+
+        if overlapRatio > 0.75 {
+            score += 36
+        } else if overlapRatio > 0.45 {
+            score += 24
+        } else if overlapRatio > 0.2 {
+            score += 12
+        }
+
+        let centerDistance = hypot(frame.midX - candidate.bounds.midX, frame.midY - candidate.bounds.midY)
+        if centerDistance < 80 {
+            score += 18
+        } else if centerDistance < 180 {
+            score += 9
+        }
+
+        let sizeDelta = abs(frame.width - candidate.bounds.width) + abs(frame.height - candidate.bounds.height)
+        if sizeDelta < 80 {
+            score += 12
+        } else if sizeDelta < 200 {
+            score += 6
+        }
+
+        return score
     }
 
     private func applicationWindowAttribute(_ attribute: CFString, for application: NSRunningApplication) -> AXUIElement? {

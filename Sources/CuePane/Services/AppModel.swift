@@ -36,6 +36,7 @@ final class AppModel: ObservableObject {
 
     private var didStart = false
     private var namingTargetSnapshot: WindowSnapshot?
+    private var namingContextSnapshots: [WindowSnapshot] = []
     private var namingAnchorID: UUID?
     private var showSearchAction: (() -> Void)?
     private var dismissSearchAction: (() -> Void)?
@@ -253,18 +254,27 @@ final class AppModel: ObservableObject {
         }
 
         let matchedRecord = matchingRecord(for: focusedWindow)
+        let visibleWindows = liveWindows(on: focusedWindow.displayID, topology: topology)
+        namingContextSnapshots = visibleWindows.compactMap { liveWindow in
+            guard !windowCatalog.sameWindow(focusedWindow, liveWindow) else {
+                return nil
+            }
+
+            return captureService.snapshot(for: liveWindow, topology: topology)
+        }
         namingTargetSnapshot = targetSnapshot
         namingAnchorID = matchedRecord?.id
         editingExistingAnchor = namingAnchorID != nil
         namingCapturesContext = true
         namingDraft = matchedRecord?.name ?? suggestedName(for: focusedWindow)
         namingTargetDescription = summary(for: focusedWindow)
-        namingPreviewCount = max(1, liveWindows(on: focusedWindow.displayID, topology: topology).count)
+        namingPreviewCount = 1 + namingContextSnapshots.count
         showNamingAction?()
     }
 
     func beginRenaming(_ record: AnchorRecord) {
         namingTargetSnapshot = nil
+        namingContextSnapshots = record.contextWindows
         namingAnchorID = record.id
         editingExistingAnchor = true
         namingCapturesContext = false
@@ -276,6 +286,7 @@ final class AppModel: ObservableObject {
 
     func dismissNaming() {
         namingTargetSnapshot = nil
+        namingContextSnapshots = []
         namingAnchorID = nil
         editingExistingAnchor = false
         namingCapturesContext = true
@@ -306,25 +317,23 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let topology = DisplayTopology.current()
-        guard let liveNamingTarget = resolveNamingTargetWindow(topology: topology) else {
+        guard let namingTargetSnapshot else {
             lastActionSummary = "저장할 윈도우가 없습니다"
             return
         }
 
-        guard let captured = captureService.captureAnchor(
-            id: namingAnchorID,
+        var finalRecord = AnchorRecord(
+            id: namingAnchorID ?? UUID(),
             name: trimmedName,
-            anchorWindow: liveNamingTarget,
-            topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet
-        ) else {
-            lastActionSummary = "문맥 스냅샷 저장에 실패했습니다"
-            return
-        }
+            anchorWindow: namingTargetSnapshot,
+            contextWindows: namingContextSnapshots.sorted { $0.captureOrder < $1.captureOrder },
+            updatedAt: Date(),
+            lastUsedAt: nil,
+            usageCount: 0,
+            isFavorite: false
+        )
 
-        var finalRecord = captured
-        if let previous = anchors.first(where: { $0.id == captured.id }) {
+        if let previous = anchors.first(where: { $0.id == finalRecord.id }) {
             finalRecord.lastUsedAt = previous.lastUsedAt
             finalRecord.usageCount = previous.usageCount
             finalRecord.isFavorite = previous.isFavorite
@@ -495,7 +504,8 @@ final class AppModel: ObservableObject {
         topologySummary = topology.summary
         liveWindowCount = windowCatalog.fetchWindows(
             topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet
+            excludedBundleIDs: preferences.excludedBundleIDSet,
+            scope: .visibleOnly
         ).count
         presentations = sortedPresentations(
             anchors.map {
@@ -513,24 +523,16 @@ final class AppModel: ObservableObject {
     }
 
     private func liveWindows(on displayID: String, topology: DisplayTopology) -> [LiveWindow] {
-        windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: preferences.excludedBundleIDSet)
+        windowCatalog.fetchWindows(
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet,
+            scope: .visibleOnly
+        )
             .filter { $0.displayID == displayID }
     }
 
     private func matchingRecord(for liveWindow: LiveWindow) -> AnchorRecord? {
         recallCoordinator.bestRecord(for: liveWindow, records: anchors)
-    }
-
-    private func resolveNamingTargetWindow(topology: DisplayTopology) -> LiveWindow? {
-        guard let namingTargetSnapshot else {
-            return nil
-        }
-
-        return recallCoordinator.captureTarget(
-            for: namingTargetSnapshot,
-            topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet
-        )
     }
 
     private func suggestedName(for liveWindow: LiveWindow) -> String {
