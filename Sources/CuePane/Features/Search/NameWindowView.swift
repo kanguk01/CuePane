@@ -2,7 +2,6 @@ import SwiftUI
 
 struct NameWindowView: View {
     @EnvironmentObject private var appModel: AppModel
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         ZStack {
@@ -37,13 +36,13 @@ struct NameWindowView: View {
                         }
                     }
 
-                    TextField("앵커 이름", text: $appModel.namingDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.title3)
-                        .focused($isFocused)
-                        .onSubmit {
-                            appModel.saveNamingDraft()
-                        }
+                    CuePaneAutoFocusTextField(
+                        placeholder: "앵커 이름",
+                        text: $appModel.namingDraft,
+                        font: .systemFont(ofSize: 20),
+                        onSubmit: appModel.saveNamingDraft
+                    )
+                    .frame(height: 34)
 
                     HStack {
                         Button("취소") {
@@ -64,9 +63,6 @@ struct NameWindowView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(22)
-        .onAppear {
-            isFocused = true
-        }
         .onExitCommand {
             appModel.dismissNaming()
         }
