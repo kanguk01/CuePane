@@ -9,7 +9,7 @@ final class WindowCoordinator {
         present(
             id: "search",
             title: "CuePane 검색",
-            size: NSSize(width: 820, height: 660),
+            size: NSSize(width: 900, height: 760),
             content: AnyView(SearchOverlayView().environmentObject(appModel))
         )
     }
@@ -22,7 +22,7 @@ final class WindowCoordinator {
         present(
             id: "naming",
             title: "윈도우 이름 붙이기",
-            size: NSSize(width: 520, height: 280),
+            size: NSSize(width: 580, height: 430),
             content: AnyView(NameWindowView().environmentObject(appModel))
         )
     }

@@ -40,6 +40,7 @@ struct NameWindowView: View {
                         placeholder: "앵커 이름",
                         text: $appModel.namingDraft,
                         font: .systemFont(ofSize: 20),
+                        onSubmitAttempt: appModel.noteNamingSubmitAttempt,
                         onSubmit: appModel.saveNamingDraft
                     )
                     .frame(height: 34)
@@ -54,6 +55,7 @@ struct NameWindowView: View {
                         Spacer(minLength: 0)
 
                         Button(appModel.namingSaveButtonTitle) {
+                            appModel.noteNamingSubmitAttempt(source: "저장 버튼")
                             appModel.saveNamingDraft()
                         }
                         .buttonStyle(.borderedProminent)
@@ -65,6 +67,8 @@ struct NameWindowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+
+                    diagnosticSection
                 }
             }
         }
@@ -72,6 +76,42 @@ struct NameWindowView: View {
         .padding(22)
         .onExitCommand {
             appModel.dismissNaming()
+        }
+    }
+
+    private var diagnosticSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+
+            Text("진단")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text("최근 입력: \(appModel.lastNamingSubmitSource)")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+
+            if appModel.debugCapturedWindows.isEmpty {
+                Text("저장 예정 창 없음")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(appModel.debugCapturedWindows.prefix(5), id: \.self) { line in
+                    Text(line)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            if !appModel.debugEventPreview.isEmpty {
+                ForEach(appModel.debugEventPreview.prefix(4), id: \.self) { line in
+                    Text(line)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
     }
 }

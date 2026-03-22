@@ -10,6 +10,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var anchors: [AnchorRecord] = []
     @Published private(set) var presentations: [AnchorPresentation] = []
     @Published private(set) var lastActionSummary = "저장된 앵커가 없습니다"
+    @Published private(set) var debugEvents: [String] = []
+    @Published private(set) var debugCapturedWindows: [String] = []
+    @Published private(set) var lastNamingSubmitSource = "없음"
     @Published var searchQuery = ""
     @Published var namingDraft = ""
     @Published private(set) var namingTargetDescription = ""
@@ -44,6 +47,12 @@ final class AppModel: ObservableObject {
     private var dismissNamingAction: (() -> Void)?
     private var showOnboardingAction: (() -> Void)?
 
+    private static let debugTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
     init() {
         if
             let data = defaults.data(forKey: preferencesKey),
@@ -61,6 +70,7 @@ final class AppModel: ObservableObject {
         } else if !anchors.isEmpty {
             lastActionSummary = "\(anchors.count)개 앵커를 불러왔습니다"
         }
+        recordDebug("앵커 로드 · \(anchors.count)개")
     }
 
     func configureWindowActions(
@@ -157,6 +167,23 @@ final class AppModel: ObservableObject {
         return "저장"
     }
 
+    var debugAnchorNamesText: String {
+        guard !anchors.isEmpty else {
+            return "없음"
+        }
+
+        let names = anchors.map(\.name)
+        if names.count <= 6 {
+            return names.joined(separator: ", ")
+        }
+
+        return names.prefix(6).joined(separator: ", ") + " 외 \(names.count - 6)개"
+    }
+
+    var debugEventPreview: [String] {
+        Array(debugEvents.prefix(6))
+    }
+
     var filteredPresentations: [AnchorPresentation] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let base = presentations
@@ -214,6 +241,7 @@ final class AppModel: ObservableObject {
     func openSearch() {
         refreshCatalogSnapshot()
         searchQuery = ""
+        recordDebug("검색 열기 · 앵커 \(anchors.count)개 · 결과 \(presentations.count)개")
         showSearchAction?()
     }
 
@@ -231,9 +259,12 @@ final class AppModel: ObservableObject {
     }
 
     func beginNamingCurrentWindow() {
+        recordDebug("이름 패널 열기 요청")
         refreshAccessibility(prompt: false)
 
         guard accessibilityGranted else {
+            debugCapturedWindows = []
+            recordDebug("이름 패널 중단 · 손쉬운 사용 권한 없음")
             lastActionSummary = "손쉬운 사용 권한이 필요합니다"
             openOnboarding()
             return
@@ -244,11 +275,15 @@ final class AppModel: ObservableObject {
             topology: topology,
             excludedBundleIDs: preferences.excludedBundleIDSet
         ) else {
+            debugCapturedWindows = []
+            recordDebug("이름 패널 중단 · 현재 활성 윈도우 없음")
             lastActionSummary = "현재 활성 윈도우를 찾지 못했습니다"
             return
         }
 
         guard let targetSnapshot = captureService.snapshot(for: focusedWindow, topology: topology) else {
+            debugCapturedWindows = []
+            recordDebug("이름 패널 중단 · 스냅샷 생성 실패 · \(debugSummary(for: focusedWindow))")
             lastActionSummary = "현재 윈도우 스냅샷을 만들지 못했습니다"
             return
         }
@@ -269,6 +304,10 @@ final class AppModel: ObservableObject {
         namingDraft = matchedRecord?.name ?? suggestedName(for: focusedWindow)
         namingTargetDescription = summary(for: focusedWindow)
         namingPreviewCount = 1 + namingContextSnapshots.count
+        refreshDebugCapturedWindows(target: targetSnapshot, context: namingContextSnapshots)
+        recordDebug(
+            "이름 패널 준비 · 대상 \(debugSummary(for: focusedWindow)) · 기존 앵커 \(matchedRecord?.name ?? "없음") · 저장 예정 \(namingPreviewCount)개"
+        )
         showNamingAction?()
     }
 
@@ -281,6 +320,8 @@ final class AppModel: ObservableObject {
         namingDraft = record.name
         namingTargetDescription = summary(for: record.anchorWindow)
         namingPreviewCount = record.totalWindowCount
+        refreshDebugCapturedWindows(target: record.anchorWindow, context: record.contextWindows)
+        recordDebug("이름 수정 열기 · \(record.name) · 문맥 \(record.totalWindowCount)개")
         showNamingAction?()
     }
 
@@ -290,18 +331,33 @@ final class AppModel: ObservableObject {
         namingAnchorID = nil
         editingExistingAnchor = false
         namingCapturesContext = true
+        debugCapturedWindows = []
         dismissNamingAction?()
+    }
+
+    func noteNamingSubmitAttempt(source: String) {
+        lastNamingSubmitSource = source
+        recordDebug("저장 입력 · \(source)")
     }
 
     func saveNamingDraft() {
         let trimmedName = namingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        recordDebug(
+            "저장 시작 · 입력 \(lastNamingSubmitSource) · 이름 '\(trimmedName)' · 수정 \(editingExistingAnchor) · 문맥저장 \(namingCapturesContext) · 대상 \(namingTargetSnapshot == nil ? "없음" : "있음") · 문맥 \(namingContextSnapshots.count)개"
+        )
+        defer {
+            lastNamingSubmitSource = "없음"
+        }
+
         guard !trimmedName.isEmpty else {
+            recordDebug("저장 중단 · 이름 비어 있음")
             lastActionSummary = "이름을 입력해야 합니다"
             return
         }
 
         if !namingCapturesContext {
             guard let namingAnchorID, let index = anchors.firstIndex(where: { $0.id == namingAnchorID }) else {
+                recordDebug("저장 중단 · 이름 수정 대상 없음")
                 lastActionSummary = "이름을 수정할 앵커를 찾지 못했습니다"
                 return
             }
@@ -310,14 +366,17 @@ final class AppModel: ObservableObject {
             updatedAnchors[index].name = trimmedName
             updatedAnchors[index].updatedAt = Date()
             guard commitAnchors(updatedAnchors) else {
+                recordDebug("저장 실패 · 이름 수정 커밋 실패")
                 return
             }
+            recordDebug("저장 완료 · 이름 수정 \(trimmedName)")
             lastActionSummary = "\(trimmedName) · 앵커 이름을 수정했습니다"
             dismissNaming()
             return
         }
 
         guard let namingTargetSnapshot else {
+            recordDebug("저장 중단 · 저장 대상 스냅샷 없음")
             lastActionSummary = "저장할 윈도우가 없습니다"
             return
         }
@@ -340,8 +399,10 @@ final class AppModel: ObservableObject {
         }
 
         guard commitAnchors(upserting(finalRecord, into: anchors)) else {
+            recordDebug("저장 실패 · 앵커 커밋 실패 \(trimmedName)")
             return
         }
+        recordDebug("저장 완료 · \(trimmedName) · 총 \(finalRecord.totalWindowCount)개")
         lastActionSummary = "\(trimmedName) · 같은 모니터 \(finalRecord.totalWindowCount)개 창 저장"
         dismissNaming()
     }
@@ -569,15 +630,18 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func commitAnchors(_ updatedRecords: [AnchorRecord]) -> Bool {
         let previousRecords = anchors
+        recordDebug("앵커 커밋 시도 · \(updatedRecords.count)개")
         anchors = AnchorRecordUtilities.sort(updatedRecords)
 
         do {
             try anchorStore.saveAnchors(anchors)
             refreshCatalogSnapshot()
+            recordDebug("앵커 커밋 성공 · \(debugAnchorNamesText)")
             return true
         } catch {
             anchors = previousRecords
             refreshCatalogSnapshot()
+            recordDebug("앵커 커밋 실패 · \(error.localizedDescription)")
             lastActionSummary = "앵커 저장 실패: \(error.localizedDescription)"
             return false
         }
@@ -630,5 +694,35 @@ final class AppModel: ObservableObject {
 
     private func sortedPresentations(_ presentations: [AnchorPresentation]) -> [AnchorPresentation] {
         AnchorRecordUtilities.sort(presentations)
+    }
+
+    private func refreshDebugCapturedWindows(target: WindowSnapshot?, context: [WindowSnapshot]) {
+        var lines: [String] = []
+
+        if let target {
+            lines.append("앵커 · \(debugSummary(for: target))")
+        }
+
+        lines.append(contentsOf: context.map { "문맥 · \(debugSummary(for: $0))" })
+        debugCapturedWindows = lines
+    }
+
+    private func debugSummary(for liveWindow: LiveWindow) -> String {
+        let title = liveWindow.title.isEmpty ? "제목 없음" : liveWindow.title
+        return "\(liveWindow.appName) · \(title) · \(liveWindow.displayID)"
+    }
+
+    private func debugSummary(for snapshot: WindowSnapshot) -> String {
+        let title = snapshot.title.isEmpty ? "제목 없음" : snapshot.title
+        return "\(snapshot.appName) · \(title) · \(snapshot.displayID)"
+    }
+
+    private func recordDebug(_ message: String) {
+        let timestamp = Self.debugTimestampFormatter.string(from: Date())
+        debugEvents.insert("\(timestamp) \(message)", at: 0)
+
+        if debugEvents.count > 16 {
+            debugEvents.removeLast(debugEvents.count - 16)
+        }
     }
 }

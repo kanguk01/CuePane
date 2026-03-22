@@ -68,6 +68,33 @@ struct SearchOverlayView: View {
                     CuePaneStatusBadge(title: "\(appModel.filteredPresentations.count)개 결과", color: CuePaneChrome.accent)
                     CuePaneStatusBadge(title: "\(appModel.favoriteCount)개 즐겨찾기", color: CuePaneChrome.mint)
                 }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("저장된 앵커")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(appModel.debugAnchorNamesText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+
+                    if !appModel.debugEventPreview.isEmpty {
+                        Text("최근 이벤트")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+
+                        ForEach(appModel.debugEventPreview.prefix(3), id: \.self) { line in
+                            Text(line)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
             }
         }
     }
