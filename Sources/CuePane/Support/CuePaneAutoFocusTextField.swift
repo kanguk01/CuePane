@@ -38,7 +38,6 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
         nsView.font = font
         context.coordinator.onSubmit = onSubmit
         context.coordinator.attach(nsView)
-        context.coordinator.scheduleFocus()
     }
 
     @MainActor
@@ -77,7 +76,10 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if
+                commandSelector == #selector(NSResponder.insertNewline(_:)) ||
+                commandSelector == #selector(NSResponder.insertLineBreak(_:))
+            {
                 onSubmit()
                 return true
             }

@@ -25,19 +25,21 @@ struct SearchOverlayView: View {
     }
 
     private var header: some View {
-        CuePaneSurface(padding: 18) {
-            HStack(alignment: .top, spacing: 14) {
+        CuePaneSurface(padding: 16) {
+            HStack(alignment: .center, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("CuePane 검색")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .lineLimit(1)
                     Text("이름, 앱명, 창 제목으로 검색하고 필요한 작업 문맥을 바로 다시 부르세요.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
 
                 Spacer(minLength: 0)
 
-                VStack(alignment: .trailing, spacing: 8) {
+                HStack(spacing: 8) {
                     CuePaneShortcutBadge(title: "Enter 문맥")
                     CuePaneShortcutBadge(title: "Esc 닫기")
                 }
@@ -46,7 +48,7 @@ struct SearchOverlayView: View {
     }
 
     private var queryField: some View {
-        CuePaneSurface(padding: 16) {
+        CuePaneSurface(padding: 14) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("빠른 검색")
                     .font(.headline)
@@ -135,6 +137,7 @@ struct SearchOverlayView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -152,13 +155,14 @@ private struct AnchorRowView: View {
     let presentation: AnchorPresentation
 
     var body: some View {
-        CuePaneSurface {
-            VStack(alignment: .leading, spacing: 14) {
+        CuePaneSurface(padding: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             Text(presentation.record.name)
                                 .font(.headline)
+                                .lineLimit(1)
 
                             if presentation.record.isFavorite {
                                 Image(systemName: "star.fill")
@@ -170,11 +174,13 @@ private struct AnchorRowView: View {
                         Text(presentation.subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
 
                         if !presentation.record.previewContextAppNames.isEmpty {
                             Text(presentation.record.previewContextAppNames.prefix(3).joined(separator: " · "))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                     }
 
@@ -183,12 +189,10 @@ private struct AnchorRowView: View {
                     CuePaneStatusBadge(title: presentation.statusLabel, color: statusColor)
                 }
 
-                HStack(spacing: 10) {
-                    metricChip(title: "문맥", value: "\(presentation.record.totalWindowCount)개")
-                    metricChip(title: "매칭", value: "\(presentation.matchedCount)개")
-                    metricChip(title: "실행", value: "\(presentation.record.usageCount)회")
-                    metricChip(title: "업데이트", value: presentation.record.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                }
+                Text("문맥 \(presentation.record.totalWindowCount)개 · 매칭 \(presentation.matchedCount)개 · 실행 \(presentation.record.usageCount)회 · \(presentation.record.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
                 HStack(spacing: 8) {
                     actionButton("문맥 복원", systemImage: "square.stack.3d.up.fill") {
@@ -208,28 +212,23 @@ private struct AnchorRowView: View {
                         appModel.updateContext(for: presentation.record)
                     }
 
-                    Button {
-                        appModel.beginRenaming(presentation.record)
+                    Menu {
+                        Button("이름 수정") {
+                            appModel.beginRenaming(presentation.record)
+                        }
+
+                        Button(presentation.record.isFavorite ? "즐겨찾기 해제" : "즐겨찾기") {
+                            appModel.toggleFavorite(presentation.record)
+                        }
+
+                        Button("삭제", role: .destructive) {
+                            appModel.delete(presentation.record)
+                        }
                     } label: {
-                        Image(systemName: "pencil")
+                        Image(systemName: "ellipsis.circle")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-
-                    Button {
-                        appModel.toggleFavorite(presentation.record)
-                    } label: {
-                        Image(systemName: presentation.record.isFavorite ? "star.slash" : "star")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button(role: .destructive) {
-                        appModel.delete(presentation.record)
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.bordered)
                 }
             }
         }
@@ -243,19 +242,6 @@ private struct AnchorRowView: View {
             return CuePaneChrome.amber
         }
         return CuePaneChrome.danger
-    }
-
-    private func metricChip(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func actionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {

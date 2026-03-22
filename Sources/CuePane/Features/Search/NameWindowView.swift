@@ -49,6 +49,7 @@ struct NameWindowView: View {
                             appModel.dismissNaming()
                         }
                         .buttonStyle(.bordered)
+                        .keyboardShortcut(.cancelAction)
 
                         Spacer(minLength: 0)
 
@@ -57,7 +58,13 @@ struct NameWindowView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(CuePaneChrome.accent)
+                        .keyboardShortcut(.defaultAction)
                     }
+
+                    Text(appModel.lastActionSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
         }
