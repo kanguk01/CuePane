@@ -38,6 +38,7 @@ final class AppModel: ObservableObject {
     private lazy var recallCoordinator = RecallCoordinator(windowCatalog: windowCatalog)
 
     private var didStart = false
+    private var workspaceActivationObserver: NSObjectProtocol?
     private var pendingHotKeyFocusedPID: pid_t?
     private var lastExternalNamingTargetSnapshot: WindowSnapshot?
     private var lastExternalNamingContextSnapshots: [WindowSnapshot] = []
@@ -98,6 +99,7 @@ final class AppModel: ObservableObject {
         didStart = true
         refreshAccessibility(prompt: false)
         refreshCatalogSnapshot()
+        registerWorkspaceObservers()
         hotKeyManager.onAction = { [weak self] action, focusedProcessIdentifier in
             guard let self else {
                 return
@@ -124,6 +126,9 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() {
+        if let workspaceActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceActivationObserver)
+        }
         try? anchorStore.saveAnchors(anchors)
     }
 
@@ -707,6 +712,35 @@ final class AppModel: ObservableObject {
         AnchorRecordUtilities.sort(presentations)
     }
 
+    private func registerWorkspaceObservers() {
+        guard workspaceActivationObserver == nil else {
+            return
+        }
+
+        workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard
+                let self,
+                let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            else {
+                return
+            }
+
+            Task { @MainActor in
+                self.handleActivatedApplication(
+                    processIdentifier: application.processIdentifier,
+                    bundleIdentifier: application.bundleIdentifier,
+                    localizedName: application.localizedName,
+                    activationPolicy: application.activationPolicy,
+                    isTerminated: application.isTerminated
+                )
+            }
+        }
+    }
+
     private func resetNamingSession(clearDraft: Bool) {
         namingTargetSnapshot = nil
         namingContextSnapshots = []
@@ -804,6 +838,31 @@ final class AppModel: ObservableObject {
             contextSnapshots: preparation.contextSnapshots
         )
         recordDebug("외부 창 캐시 갱신 · \(debugSummary(for: preparation.targetSnapshot))")
+    }
+
+    private func handleActivatedApplication(
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        localizedName: String?,
+        activationPolicy: NSApplication.ActivationPolicy,
+        isTerminated: Bool
+    ) {
+        guard
+            activationPolicy == .regular,
+            !isTerminated,
+            let bundleIdentifier,
+            bundleIdentifier != Bundle.main.bundleIdentifier,
+            !preferences.excludedBundleIDSet.contains(bundleIdentifier)
+        else {
+            return
+        }
+
+        recordDebug("앱 활성화 감지 · \(localizedName ?? bundleIdentifier)")
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            self?.updateExternalNamingCache(preferredProcessIdentifier: processIdentifier)
+        }
     }
 
     private func cacheExternalNamingState(targetSnapshot: WindowSnapshot, contextSnapshots: [WindowSnapshot]) {
