@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 import UniformTypeIdentifiers
 
@@ -40,11 +41,13 @@ final class AppModel: ObservableObject {
     private var didStart = false
     private var workspaceActivationObserver: NSObjectProtocol?
     private var pendingHotKeyFocusedPID: pid_t?
+    private var pendingHotKeyWindowElement: AXUIElement?
     private var lastExternalNamingTargetSnapshot: WindowSnapshot?
     private var lastExternalNamingContextSnapshots: [WindowSnapshot] = []
     private var namingTargetSnapshot: WindowSnapshot?
     private var namingContextSnapshots: [WindowSnapshot] = []
     private var namingAnchorID: UUID?
+    private var lastNamingRequestTime: Date = .distantPast
     private var showSearchAction: (() -> Void)?
     private var dismissSearchAction: (() -> Void)?
     private var showNamingAction: (() -> Void)?
@@ -100,13 +103,14 @@ final class AppModel: ObservableObject {
         refreshAccessibility(prompt: false)
         refreshCatalogSnapshot()
         registerWorkspaceObservers()
-        hotKeyManager.onAction = { [weak self] action, focusedProcessIdentifier in
+        hotKeyManager.onAction = { [weak self] action, focusedPID, focusedWindowElement in
             guard let self else {
                 return
             }
 
             Task { @MainActor in
-                self.pendingHotKeyFocusedPID = focusedProcessIdentifier
+                self.pendingHotKeyFocusedPID = focusedPID
+                self.pendingHotKeyWindowElement = focusedWindowElement
                 switch action {
                 case .toggleSearch:
                     self.openSearch()
@@ -257,8 +261,10 @@ final class AppModel: ObservableObject {
 
     func openSearch() {
         let preferredProcessIdentifier = pendingHotKeyFocusedPID
+        let preferredWindowElement = pendingHotKeyWindowElement
         pendingHotKeyFocusedPID = nil
-        updateExternalNamingCache(preferredProcessIdentifier: preferredProcessIdentifier)
+        pendingHotKeyWindowElement = nil
+        updateExternalNamingCache(preferredProcessIdentifier: preferredProcessIdentifier, preferredWindowElement: preferredWindowElement)
         refreshCatalogSnapshot()
         searchQuery = ""
         recordDebug("검색 열기 · 앵커 \(anchors.count)개 · 결과 \(presentations.count)개")
@@ -279,10 +285,35 @@ final class AppModel: ObservableObject {
     }
 
     func beginNamingCurrentWindow() {
+        // 핫키 반복이나 중복 호출 방지 (1초 이내 재호출 무시)
+        let now = Date()
+        if now.timeIntervalSince(lastNamingRequestTime) < 1.0 {
+            pendingHotKeyFocusedPID = nil
+            pendingHotKeyWindowElement = nil
+            writeDiag("debounce: 중복 호출 무시")
+            return
+        }
+        lastNamingRequestTime = now
+
         let preferredProcessIdentifier = pendingHotKeyFocusedPID
+        let preferredWindowElement = pendingHotKeyWindowElement
         pendingHotKeyFocusedPID = nil
+        pendingHotKeyWindowElement = nil
+
+        // 핫키가 CuePane 자신의 창(이름 패널 등)에서 눌린 경우:
+        // 이미 유효한 캡처 대상이 있으면 세션을 초기화하지 않고 패널만 다시 보여줍니다.
+        if isCuePaneElement(preferredWindowElement), namingTargetSnapshot != nil {
+            recordDebug("이름 패널 재표시 · CuePane 포커스 · 기존 대상 유지")
+            showNamingAction?()
+            return
+        }
+
         resetNamingSession(clearDraft: true)
-        recordDebug("이름 패널 열기 요청")
+        let diagPID = preferredProcessIdentifier.map(String.init) ?? "nil"
+        let diagElem = preferredWindowElement == nil ? "nil" : "있음"
+        let diagSelf = isCuePaneElement(preferredWindowElement)
+        recordDebug("열기 · PID \(diagPID) · elem \(diagElem) · 자앱 \(diagSelf)")
+        writeDiag("beginNaming: PID=\(diagPID) elem=\(diagElem) isSelf=\(diagSelf)")
         refreshAccessibility(prompt: false)
 
         guard accessibilityGranted else {
@@ -293,7 +324,16 @@ final class AppModel: ObservableObject {
             return
         }
 
-        if let preparation = prepareLiveNamingCandidate(preferredProcessIdentifier: preferredProcessIdentifier) {
+        let preparation = prepareLiveNamingCandidate(
+            preferredProcessIdentifier: preferredProcessIdentifier,
+            preferredWindowElement: preferredWindowElement
+        )
+        let diagLive = preparation == nil ? "실패" : "성공·\(preparation!.focusedWindow.appName)"
+        let diagCache = lastExternalNamingTargetSnapshot == nil ? "없음" : lastExternalNamingTargetSnapshot!.appName
+        recordDebug("실시간 \(diagLive) · 캐시 \(diagCache)")
+        writeDiag("prepare: live=\(diagLive) cache=\(diagCache)")
+
+        if let preparation {
             applyNamingCandidate(
                 targetSnapshot: preparation.targetSnapshot,
                 contextSnapshots: preparation.contextSnapshots,
@@ -302,7 +342,7 @@ final class AppModel: ObservableObject {
                 targetDescription: summary(for: preparation.focusedWindow)
             )
             recordDebug(
-                "이름 패널 준비 · 실시간 대상 \(debugSummary(for: preparation.focusedWindow)) · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음") · 기존 앵커 \(preparation.matchedRecord?.name ?? "없음") · 저장 예정 \(namingPreviewCount)개"
+                "대상 · \(debugSummary(for: preparation.focusedWindow)) · 저장 예정 \(namingPreviewCount)개"
             )
             showNamingAction?()
             return
@@ -355,6 +395,7 @@ final class AppModel: ObservableObject {
 
     func saveNamingDraft() {
         let trimmedName = namingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        writeDiag("saveNamingDraft: name='\(trimmedName)' target=\(namingTargetSnapshot == nil ? "nil" : "있음") source=\(lastNamingSubmitSource)")
         recordDebug(
             "저장 시작 · 입력 \(lastNamingSubmitSource) · 이름 '\(trimmedName)' · 수정 \(editingExistingAnchor) · 문맥저장 \(namingCapturesContext) · 대상 \(namingTargetSnapshot == nil ? "없음" : "있음") · 문맥 \(namingContextSnapshots.count)개"
         )
@@ -779,14 +820,16 @@ final class AppModel: ObservableObject {
     }
 
     private func prepareLiveNamingCandidate(
-        preferredProcessIdentifier: pid_t?
+        preferredProcessIdentifier: pid_t?,
+        preferredWindowElement: AXUIElement? = nil
     ) -> (focusedWindow: LiveWindow, targetSnapshot: WindowSnapshot, contextSnapshots: [WindowSnapshot], matchedRecord: AnchorRecord?)? {
         let topology = DisplayTopology.current()
 
         guard let focusedWindow = windowCatalog.focusedWindow(
             topology: topology,
             excludedBundleIDs: preferences.excludedBundleIDSet,
-            preferredProcessIdentifier: preferredProcessIdentifier
+            preferredProcessIdentifier: preferredProcessIdentifier,
+            preferredWindowElement: preferredWindowElement
         ) else {
             return nil
         }
@@ -827,8 +870,11 @@ final class AppModel: ObservableObject {
         refreshDebugCapturedWindows(target: targetSnapshot, context: contextSnapshots)
     }
 
-    private func updateExternalNamingCache(preferredProcessIdentifier: pid_t?) {
-        guard let preparation = prepareLiveNamingCandidate(preferredProcessIdentifier: preferredProcessIdentifier) else {
+    private func updateExternalNamingCache(preferredProcessIdentifier: pid_t?, preferredWindowElement: AXUIElement? = nil) {
+        guard let preparation = prepareLiveNamingCandidate(
+            preferredProcessIdentifier: preferredProcessIdentifier,
+            preferredWindowElement: preferredWindowElement
+        ) else {
             recordDebug("외부 창 캐시 유지 · 새 대상 없음")
             return
         }
@@ -865,6 +911,13 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func isCuePaneElement(_ element: AXUIElement?) -> Bool {
+        guard let element else { return false }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else { return false }
+        return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == Bundle.main.bundleIdentifier
+    }
+
     private func cacheExternalNamingState(targetSnapshot: WindowSnapshot, contextSnapshots: [WindowSnapshot]) {
         lastExternalNamingTargetSnapshot = targetSnapshot
         lastExternalNamingContextSnapshots = contextSnapshots.sorted { $0.captureOrder < $1.captureOrder }
@@ -884,6 +937,19 @@ final class AppModel: ObservableObject {
         }
 
         return trimmedTitle
+    }
+
+    private func writeDiag(_ message: String) {
+        let ts = Self.debugTimestampFormatter.string(from: Date())
+        let line = "\(ts) \(message)\n"
+        let path = "/tmp/cuepane_diag.txt"
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8) ?? Data())
+            handle.closeFile()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+        }
     }
 
     private func recordDebug(_ message: String) {

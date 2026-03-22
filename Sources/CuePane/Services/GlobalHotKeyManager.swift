@@ -32,7 +32,7 @@ enum GlobalHotKeyAction: UInt32, CaseIterable {
 final class GlobalHotKeyManager {
     private static let hotKeySignature = OSType(0x43504531)
 
-    var onAction: ((GlobalHotKeyAction, pid_t?) -> Void)?
+    var onAction: ((GlobalHotKeyAction, pid_t?, AXUIElement?) -> Void)?
 
     private var hotKeyRefs: [GlobalHotKeyAction: EventHotKeyRef] = [:]
     private var carbonEventHandler: EventHandlerRef?
@@ -111,7 +111,8 @@ final class GlobalHotKeyManager {
                 }
 
                 let manager = Unmanaged<GlobalHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-                manager.onAction?(action, manager.focusedProcessIdentifier())
+                let (pid, windowElement) = manager.capturedFocusState()
+                manager.onAction?(action, pid, windowElement)
                 return noErr
             },
             1,
@@ -121,24 +122,35 @@ final class GlobalHotKeyManager {
         )
     }
 
-    private func focusedProcessIdentifier() -> pid_t? {
+    /// 핫키 발화 시점의 포커스 상태를 스냅샷으로 캡처합니다.
+    /// Carbon 핸들러(메인 스레드)에서 호출되며, 이후 포커스가 바뀌어도 정확한 창을 특정할 수 있게 합니다.
+    private func capturedFocusState() -> (pid_t?, AXUIElement?) {
         let systemWide = AXUIElementCreateSystemWide()
-        var value: CFTypeRef?
+        var appValue: CFTypeRef?
 
         guard
-            AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &value) == .success,
-            let value,
-            CFGetTypeID(value) == AXUIElementGetTypeID()
+            AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &appValue) == .success,
+            let appValue,
+            CFGetTypeID(appValue) == AXUIElementGetTypeID()
         else {
-            return nil
+            return (nil, nil)
         }
 
-        let appElement = value as! AXUIElement
+        let appElement = appValue as! AXUIElement
         var processIdentifier: pid_t = 0
         guard AXUIElementGetPid(appElement, &processIdentifier) == .success else {
-            return nil
+            return (nil, nil)
         }
 
-        return processIdentifier
+        var windowValue: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .success,
+            let windowValue,
+            CFGetTypeID(windowValue) == AXUIElementGetTypeID()
+        else {
+            return (processIdentifier, nil)
+        }
+
+        return (processIdentifier, (windowValue as! AXUIElement))
     }
 }

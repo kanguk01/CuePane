@@ -65,10 +65,20 @@ final class WindowCatalogService {
     func focusedWindow(
         topology: DisplayTopology,
         excludedBundleIDs: Set<String>,
-        preferredProcessIdentifier: pid_t? = nil
+        preferredProcessIdentifier: pid_t? = nil,
+        preferredWindowElement: AXUIElement? = nil
     ) -> LiveWindow? {
         guard AXIsProcessTrusted() else {
             return nil
+        }
+
+        // 핫키 시점에 캡처한 AX element로 직접 매칭 (포커스 전환 후에도 정확한 창 특정 가능)
+        if let preferredWindowElement {
+            let matched = window(matchingElement: preferredWindowElement, topology: topology, excludedBundleIDs: excludedBundleIDs)
+            print("[CuePane] element매칭 시도 · 결과 \(matched == nil ? "nil" : matched!.appName)")
+            if let matched {
+                return matched
+            }
         }
 
         if
@@ -183,6 +193,102 @@ final class WindowCatalogService {
 
     func sameWindow(_ lhs: LiveWindow, _ rhs: LiveWindow) -> Bool {
         CFEqual(lhs.element, rhs.element)
+    }
+
+    /// 핫키 시점에 캡처한 AX element에서 직접 LiveWindow를 구성합니다.
+    /// window 목록 열거 및 CFEqual 매칭 없이, element 자체의 AX 속성을 읽어 LiveWindow를 만듭니다.
+    private func window(
+        matchingElement element: AXUIElement,
+        topology: DisplayTopology,
+        excludedBundleIDs: Set<String>
+    ) -> LiveWindow? {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else {
+            print("[CuePane] element매칭 실패 · PID 추출 불가")
+            return nil
+        }
+
+        guard
+            let application = NSRunningApplication(processIdentifier: pid),
+            application.activationPolicy == .regular,
+            !application.isTerminated,
+            let bundleIdentifier = application.bundleIdentifier
+        else {
+            print("[CuePane] element매칭 실패 · 앱 조회 불가 PID=\(pid)")
+            return nil
+        }
+
+        if bundleIdentifier == Bundle.main.bundleIdentifier {
+            print("[CuePane] element매칭 스킵 · 자기 자신 \(bundleIdentifier)")
+            return nil
+        }
+
+        if excludedBundleIDs.contains(bundleIdentifier) {
+            print("[CuePane] element매칭 스킵 · 제외 앱 \(bundleIdentifier)")
+            return nil
+        }
+
+        // AX element에서 직접 속성을 읽어 LiveWindow를 구성합니다.
+        guard
+            let role = stringAttribute(kAXRoleAttribute as CFString, from: element),
+            role == kAXWindowRole as String
+        else {
+            print("[CuePane] element매칭 실패 · role 불일치 (role=\(stringAttribute(kAXRoleAttribute as CFString, from: element) ?? "nil"))")
+            return nil
+        }
+
+        guard
+            let position = pointAttribute(kAXPositionAttribute as CFString, from: element),
+            let size = sizeAttribute(kAXSizeAttribute as CFString, from: element)
+        else {
+            print("[CuePane] element매칭 실패 · position/size 조회 불가")
+            return nil
+        }
+
+        let isMinimized = boolAttribute(kAXMinimizedAttribute as CFString, from: element) ?? false
+        let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: element) ?? ""
+        let frame = CGRect(origin: position, size: size)
+
+        guard
+            !isMinimized,
+            frame.width >= 180,
+            frame.height >= 120,
+            isStandardWindow(subrole: subrole),
+            let displayID = displayID(for: frame, topology: topology)
+        else {
+            print("[CuePane] element매칭 실패 · 필터 탈락 min=\(isMinimized) frame=\(frame) subrole=\(subrole)")
+            return nil
+        }
+
+        let title = stringAttribute(kAXTitleAttribute as CFString, from: element) ?? ""
+        let metadata = WindowTitleNormalizer.metadata(
+            title: title,
+            appName: application.localizedName ?? bundleIdentifier,
+            bundleIdentifier: bundleIdentifier
+        )
+        let isFocused = boolAttribute(kAXMainAttribute as CFString, from: element)
+            ?? boolAttribute(kAXFocusedAttribute as CFString, from: element)
+            ?? false
+
+        print("[CuePane] element매칭 성공 · \(application.localizedName ?? bundleIdentifier) · \(title)")
+
+        return LiveWindow(
+            appName: application.localizedName ?? bundleIdentifier,
+            bundleIdentifier: bundleIdentifier,
+            title: title,
+            normalizedTitle: metadata.normalizedTitle,
+            titleTokens: metadata.titleTokens,
+            role: role,
+            subrole: subrole,
+            appKind: metadata.appKind,
+            frame: frame,
+            centerPoint: CGPoint(x: frame.midX, y: frame.midY),
+            displayID: displayID,
+            windowOrder: 0,
+            isFocused: isFocused,
+            application: application,
+            element: element
+        )
     }
 
     private func eligibleFrontmostApplication(excludedBundleIDs: Set<String>) -> NSRunningApplication? {

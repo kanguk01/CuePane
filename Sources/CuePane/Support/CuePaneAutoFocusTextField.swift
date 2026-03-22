@@ -22,8 +22,6 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
         textField.focusRingType = .default
         textField.font = font
         textField.delegate = context.coordinator
-        textField.target = context.coordinator
-        textField.action = #selector(Coordinator.submit)
 
         context.coordinator.attach(textField)
         context.coordinator.scheduleFocus()
