@@ -15,17 +15,21 @@ mkdir -p "$CERT_DIR"
 
 ensure_keychain_in_search_list() {
   local -a current_keychains
-  current_keychains=("${(@f)$(security list-keychains -d user | tr -d '"')}")
+  current_keychains=("${(@f)$(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"$//')}")
 
   if [[ ! " ${current_keychains[*]} " == *" ${KEYCHAIN_PATH} "* ]]; then
     security list-keychains -d user -s "$KEYCHAIN_PATH" "${current_keychains[@]}"
   fi
 }
 
-if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null | grep -F "\"$IDENTITY_NAME\"" >/dev/null; then
-  if [[ ! -f "$KEYCHAIN_PATH" ]]; then
-    security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+if ! security find-certificate -c "$IDENTITY_NAME" "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+  if [[ -f "$KEYCHAIN_PATH" ]]; then
+    security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
   fi
+
+  rm -rf "$CERT_DIR"
+  mkdir -p "$CERT_DIR"
+  security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
 
   security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
   security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -38,11 +42,10 @@ prompt = no
 [ dn ]
 CN = $IDENTITY_NAME
 [ ext ]
-basicConstraints = critical,CA:TRUE
-keyUsage = critical,digitalSignature,keyCertSign
-extendedKeyUsage = codeSigning
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
 subjectKeyIdentifier = hash
-authorityKeyIdentifier = keyid:always
 EOF
 
   openssl req \

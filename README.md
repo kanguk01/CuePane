@@ -121,7 +121,7 @@ CuePane는 macOS 손쉬운 사용 권한을 사용합니다.
 ```
 
 DMG는 `dist/CuePane.dmg`에 생성됩니다.  
-기본값은 로컬 ad-hoc 서명이고, 별도 인증서로 서명하려면 `CUEPANE_SIGNING_IDENTITY`를 지정하면 됩니다.
+기본값은 로컬 고정 코드서명(`CuePane Local Signer`)이고, ad-hoc 서명이 필요하면 `CUEPANE_SIGNING_IDENTITY=-`로 빌드하면 됩니다.
 
 아이콘만 다시 생성하려면:
 
