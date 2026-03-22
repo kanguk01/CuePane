@@ -39,6 +39,8 @@ final class AppModel: ObservableObject {
 
     private var didStart = false
     private var pendingHotKeyFocusedPID: pid_t?
+    private var lastExternalNamingTargetSnapshot: WindowSnapshot?
+    private var lastExternalNamingContextSnapshots: [WindowSnapshot] = []
     private var namingTargetSnapshot: WindowSnapshot?
     private var namingContextSnapshots: [WindowSnapshot] = []
     private var namingAnchorID: UUID?
@@ -249,6 +251,9 @@ final class AppModel: ObservableObject {
     }
 
     func openSearch() {
+        let preferredProcessIdentifier = pendingHotKeyFocusedPID
+        pendingHotKeyFocusedPID = nil
+        updateExternalNamingCache(preferredProcessIdentifier: preferredProcessIdentifier)
         refreshCatalogSnapshot()
         searchQuery = ""
         recordDebug("검색 열기 · 앵커 \(anchors.count)개 · 결과 \(presentations.count)개")
@@ -283,46 +288,40 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let topology = DisplayTopology.current()
-        guard let focusedWindow = windowCatalog.focusedWindow(
-            topology: topology,
-            excludedBundleIDs: preferences.excludedBundleIDSet,
-            preferredProcessIdentifier: preferredProcessIdentifier
-        ) else {
-            namingTargetDescription = "현재 활성 윈도우를 찾지 못했습니다"
-            recordDebug("이름 패널 중단 · 현재 활성 윈도우 없음 · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음")")
-            lastActionSummary = "현재 활성 윈도우를 찾지 못했습니다"
+        if let preparation = prepareLiveNamingCandidate(preferredProcessIdentifier: preferredProcessIdentifier) {
+            applyNamingCandidate(
+                targetSnapshot: preparation.targetSnapshot,
+                contextSnapshots: preparation.contextSnapshots,
+                matchedRecord: preparation.matchedRecord,
+                draftName: preparation.matchedRecord?.name ?? suggestedName(for: preparation.focusedWindow),
+                targetDescription: summary(for: preparation.focusedWindow)
+            )
+            recordDebug(
+                "이름 패널 준비 · 실시간 대상 \(debugSummary(for: preparation.focusedWindow)) · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음") · 기존 앵커 \(preparation.matchedRecord?.name ?? "없음") · 저장 예정 \(namingPreviewCount)개"
+            )
+            showNamingAction?()
             return
         }
 
-        guard let targetSnapshot = captureService.snapshot(for: focusedWindow, topology: topology) else {
-            namingTargetDescription = "현재 윈도우 스냅샷을 만들지 못했습니다"
-            recordDebug("이름 패널 중단 · 스냅샷 생성 실패 · \(debugSummary(for: focusedWindow))")
-            lastActionSummary = "현재 윈도우 스냅샷을 만들지 못했습니다"
+        if let cachedTargetSnapshot = lastExternalNamingTargetSnapshot {
+            let matchedRecord = matchingRecord(for: cachedTargetSnapshot)
+            applyNamingCandidate(
+                targetSnapshot: cachedTargetSnapshot,
+                contextSnapshots: lastExternalNamingContextSnapshots,
+                matchedRecord: matchedRecord,
+                draftName: matchedRecord?.name ?? suggestedName(for: cachedTargetSnapshot),
+                targetDescription: "\(summary(for: cachedTargetSnapshot)) · 마지막 외부 창"
+            )
+            recordDebug(
+                "이름 패널 준비 · 캐시 대상 \(debugSummary(for: cachedTargetSnapshot)) · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음") · 저장 예정 \(namingPreviewCount)개"
+            )
+            showNamingAction?()
             return
         }
 
-        let matchedRecord = matchingRecord(for: focusedWindow)
-        let visibleWindows = liveWindows(on: focusedWindow.displayID, topology: topology)
-        namingContextSnapshots = visibleWindows.compactMap { liveWindow in
-            guard !windowCatalog.sameWindow(focusedWindow, liveWindow) else {
-                return nil
-            }
-
-            return captureService.snapshot(for: liveWindow, topology: topology)
-        }
-        namingTargetSnapshot = targetSnapshot
-        namingAnchorID = matchedRecord?.id
-        editingExistingAnchor = namingAnchorID != nil
-        namingCapturesContext = true
-        namingDraft = matchedRecord?.name ?? suggestedName(for: focusedWindow)
-        namingTargetDescription = summary(for: focusedWindow)
-        namingPreviewCount = 1 + namingContextSnapshots.count
-        refreshDebugCapturedWindows(target: targetSnapshot, context: namingContextSnapshots)
-        recordDebug(
-            "이름 패널 준비 · 대상 \(debugSummary(for: focusedWindow)) · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음") · 기존 앵커 \(matchedRecord?.name ?? "없음") · 저장 예정 \(namingPreviewCount)개"
-        )
-        showNamingAction?()
+        namingTargetDescription = "현재 활성 윈도우를 찾지 못했습니다"
+        recordDebug("이름 패널 중단 · 현재 활성 윈도우 없음 · 선호 PID \(preferredProcessIdentifier.map(String.init) ?? "없음")")
+        lastActionSummary = "현재 활성 윈도우를 찾지 못했습니다"
     }
 
     func beginRenaming(_ record: AnchorRecord) {
@@ -743,6 +742,89 @@ final class AppModel: ObservableObject {
     private func debugSummary(for snapshot: WindowSnapshot) -> String {
         let title = snapshot.title.isEmpty ? "제목 없음" : snapshot.title
         return "\(snapshot.appName) · \(title) · \(snapshot.displayID)"
+    }
+
+    private func prepareLiveNamingCandidate(
+        preferredProcessIdentifier: pid_t?
+    ) -> (focusedWindow: LiveWindow, targetSnapshot: WindowSnapshot, contextSnapshots: [WindowSnapshot], matchedRecord: AnchorRecord?)? {
+        let topology = DisplayTopology.current()
+
+        guard let focusedWindow = windowCatalog.focusedWindow(
+            topology: topology,
+            excludedBundleIDs: preferences.excludedBundleIDSet,
+            preferredProcessIdentifier: preferredProcessIdentifier
+        ) else {
+            return nil
+        }
+
+        guard let targetSnapshot = captureService.snapshot(for: focusedWindow, topology: topology) else {
+            recordDebug("이름 패널 중단 · 스냅샷 생성 실패 · \(debugSummary(for: focusedWindow))")
+            lastActionSummary = "현재 윈도우 스냅샷을 만들지 못했습니다"
+            return nil
+        }
+
+        let contextSnapshots = liveWindows(on: focusedWindow.displayID, topology: topology).compactMap { liveWindow -> WindowSnapshot? in
+            guard !windowCatalog.sameWindow(focusedWindow, liveWindow) else {
+                return nil
+            }
+
+            return captureService.snapshot(for: liveWindow, topology: topology)
+        }
+
+        cacheExternalNamingState(targetSnapshot: targetSnapshot, contextSnapshots: contextSnapshots)
+        return (focusedWindow, targetSnapshot, contextSnapshots, matchingRecord(for: focusedWindow))
+    }
+
+    private func applyNamingCandidate(
+        targetSnapshot: WindowSnapshot,
+        contextSnapshots: [WindowSnapshot],
+        matchedRecord: AnchorRecord?,
+        draftName: String,
+        targetDescription: String
+    ) {
+        namingTargetSnapshot = targetSnapshot
+        namingContextSnapshots = contextSnapshots
+        namingAnchorID = matchedRecord?.id
+        editingExistingAnchor = namingAnchorID != nil
+        namingCapturesContext = true
+        namingDraft = draftName
+        namingTargetDescription = targetDescription
+        namingPreviewCount = 1 + contextSnapshots.count
+        refreshDebugCapturedWindows(target: targetSnapshot, context: contextSnapshots)
+    }
+
+    private func updateExternalNamingCache(preferredProcessIdentifier: pid_t?) {
+        guard let preparation = prepareLiveNamingCandidate(preferredProcessIdentifier: preferredProcessIdentifier) else {
+            recordDebug("외부 창 캐시 유지 · 새 대상 없음")
+            return
+        }
+
+        cacheExternalNamingState(
+            targetSnapshot: preparation.targetSnapshot,
+            contextSnapshots: preparation.contextSnapshots
+        )
+        recordDebug("외부 창 캐시 갱신 · \(debugSummary(for: preparation.targetSnapshot))")
+    }
+
+    private func cacheExternalNamingState(targetSnapshot: WindowSnapshot, contextSnapshots: [WindowSnapshot]) {
+        lastExternalNamingTargetSnapshot = targetSnapshot
+        lastExternalNamingContextSnapshots = contextSnapshots.sorted { $0.captureOrder < $1.captureOrder }
+    }
+
+    private func matchingRecord(for snapshot: WindowSnapshot) -> AnchorRecord? {
+        anchors.first { record in
+            record.anchorWindow.bundleIdentifier == snapshot.bundleIdentifier &&
+            record.anchorWindow.normalizedTitle == snapshot.normalizedTitle
+        }
+    }
+
+    private func suggestedName(for snapshot: WindowSnapshot) -> String {
+        let trimmedTitle = snapshot.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.isEmpty {
+            return snapshot.appName
+        }
+
+        return trimmedTitle
     }
 
     private func recordDebug(_ message: String) {
