@@ -67,6 +67,13 @@ final class WindowCatalogService {
             return nil
         }
 
+        if let focusedWindow = systemWideFocusedWindow(
+            topology: topology,
+            excludedBundleIDs: excludedBundleIDs
+        ) {
+            return focusedWindow
+        }
+
         if let frontmostApp = eligibleFrontmostApplication(excludedBundleIDs: excludedBundleIDs) {
             let frontmostWindows = windows(
                 for: frontmostApp,
@@ -170,6 +177,69 @@ final class WindowCatalogService {
               let bundleIdentifier = application.bundleIdentifier,
               bundleIdentifier != Bundle.main.bundleIdentifier,
               !excludedBundleIDs.contains(bundleIdentifier)
+        else {
+            return nil
+        }
+
+        return application
+    }
+
+    private func systemWideFocusedWindow(topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
+        guard let application = systemWideFocusedApplication(excludedBundleIDs: excludedBundleIDs) else {
+            return nil
+        }
+
+        let frontmostWindows = windows(
+            for: application,
+            topology: topology,
+            onScreenWindows: onScreenWindowReferences()
+        )
+
+        if
+            let focusedElement = applicationWindowAttribute(
+                kAXFocusedWindowAttribute as CFString,
+                for: application
+            ),
+            let focusedWindow = frontmostWindows.first(where: { CFEqual($0.element, focusedElement) })
+        {
+            return focusedWindow
+        }
+
+        if
+            let mainElement = applicationWindowAttribute(
+                kAXMainWindowAttribute as CFString,
+                for: application
+            ),
+            let mainWindow = frontmostWindows.first(where: { CFEqual($0.element, mainElement) })
+        {
+            return mainWindow
+        }
+
+        return frontmostWindows.first(where: \.isFocused) ?? frontmostWindows.first
+    }
+
+    private func systemWideFocusedApplication(excludedBundleIDs: Set<String>) -> NSRunningApplication? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var value: CFTypeRef?
+
+        guard
+            AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &value) == .success,
+            let value,
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+
+        let appElement = value as! AXUIElement
+        var processIdentifier: pid_t = 0
+        guard
+            AXUIElementGetPid(appElement, &processIdentifier) == .success,
+            let application = NSRunningApplication(processIdentifier: processIdentifier),
+            application.activationPolicy == .regular,
+            !application.isTerminated,
+            let bundleIdentifier = application.bundleIdentifier,
+            bundleIdentifier != Bundle.main.bundleIdentifier,
+            !excludedBundleIDs.contains(bundleIdentifier)
         else {
             return nil
         }

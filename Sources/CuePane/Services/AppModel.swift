@@ -157,7 +157,15 @@ final class AppModel: ObservableObject {
     }
 
     var namingBadgeText: String {
-        namingCapturesContext ? "\(namingPreviewCount)개 창 저장 예정" : "문맥은 유지"
+        if !namingCapturesContext {
+            return "문맥은 유지"
+        }
+
+        if namingPreviewCount == 0 {
+            return "저장 대상 없음"
+        }
+
+        return "\(namingPreviewCount)개 창 저장 예정"
     }
 
     var namingSaveButtonTitle: String {
@@ -259,11 +267,12 @@ final class AppModel: ObservableObject {
     }
 
     func beginNamingCurrentWindow() {
+        resetNamingSession(clearDraft: true)
         recordDebug("이름 패널 열기 요청")
         refreshAccessibility(prompt: false)
 
         guard accessibilityGranted else {
-            debugCapturedWindows = []
+            namingTargetDescription = "손쉬운 사용 권한이 필요합니다"
             recordDebug("이름 패널 중단 · 손쉬운 사용 권한 없음")
             lastActionSummary = "손쉬운 사용 권한이 필요합니다"
             openOnboarding()
@@ -275,14 +284,14 @@ final class AppModel: ObservableObject {
             topology: topology,
             excludedBundleIDs: preferences.excludedBundleIDSet
         ) else {
-            debugCapturedWindows = []
+            namingTargetDescription = "현재 활성 윈도우를 찾지 못했습니다"
             recordDebug("이름 패널 중단 · 현재 활성 윈도우 없음")
             lastActionSummary = "현재 활성 윈도우를 찾지 못했습니다"
             return
         }
 
         guard let targetSnapshot = captureService.snapshot(for: focusedWindow, topology: topology) else {
-            debugCapturedWindows = []
+            namingTargetDescription = "현재 윈도우 스냅샷을 만들지 못했습니다"
             recordDebug("이름 패널 중단 · 스냅샷 생성 실패 · \(debugSummary(for: focusedWindow))")
             lastActionSummary = "현재 윈도우 스냅샷을 만들지 못했습니다"
             return
@@ -312,7 +321,7 @@ final class AppModel: ObservableObject {
     }
 
     func beginRenaming(_ record: AnchorRecord) {
-        namingTargetSnapshot = nil
+        resetNamingSession(clearDraft: true)
         namingContextSnapshots = record.contextWindows
         namingAnchorID = record.id
         editingExistingAnchor = true
@@ -326,12 +335,7 @@ final class AppModel: ObservableObject {
     }
 
     func dismissNaming() {
-        namingTargetSnapshot = nil
-        namingContextSnapshots = []
-        namingAnchorID = nil
-        editingExistingAnchor = false
-        namingCapturesContext = true
-        debugCapturedWindows = []
+        resetNamingSession(clearDraft: true)
         dismissNamingAction?()
     }
 
@@ -376,6 +380,9 @@ final class AppModel: ObservableObject {
         }
 
         guard let namingTargetSnapshot else {
+            namingTargetDescription = "저장할 현재 창을 다시 캡처하세요"
+            namingPreviewCount = 0
+            debugCapturedWindows = []
             recordDebug("저장 중단 · 저장 대상 스냅샷 없음")
             lastActionSummary = "저장할 윈도우가 없습니다"
             return
@@ -694,6 +701,22 @@ final class AppModel: ObservableObject {
 
     private func sortedPresentations(_ presentations: [AnchorPresentation]) -> [AnchorPresentation] {
         AnchorRecordUtilities.sort(presentations)
+    }
+
+    private func resetNamingSession(clearDraft: Bool) {
+        namingTargetSnapshot = nil
+        namingContextSnapshots = []
+        namingAnchorID = nil
+        editingExistingAnchor = false
+        namingCapturesContext = true
+        namingTargetDescription = ""
+        namingPreviewCount = 0
+        debugCapturedWindows = []
+        lastNamingSubmitSource = "없음"
+
+        if clearDraft {
+            namingDraft = ""
+        }
     }
 
     private func refreshDebugCapturedWindows(target: WindowSnapshot?, context: [WindowSnapshot]) {
