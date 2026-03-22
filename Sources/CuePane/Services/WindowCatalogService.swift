@@ -45,16 +45,50 @@ final class WindowCatalogService {
     }
 
     func focusedWindow(topology: DisplayTopology, excludedBundleIDs: Set<String>) -> LiveWindow? {
-        let windows = fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
-        if let focused = windows.first(where: \.isFocused) {
-            return focused
-        }
-
-        guard let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+        guard AXIsProcessTrusted() else {
             return nil
         }
 
-        return windows.first(where: { $0.bundleIdentifier == frontmostBundleID })
+        if let frontmostApp = eligibleFrontmostApplication(excludedBundleIDs: excludedBundleIDs) {
+            let frontmostWindows = windows(for: frontmostApp, topology: topology)
+
+            if
+                let focusedElement = applicationWindowAttribute(
+                    kAXFocusedWindowAttribute as CFString,
+                    for: frontmostApp
+                ),
+                let focusedWindow = frontmostWindows.first(where: { CFEqual($0.element, focusedElement) })
+            {
+                return focusedWindow
+            }
+
+            if let focusedWindow = frontmostWindows.first(where: \.isFocused) {
+                return focusedWindow
+            }
+
+            if
+                let mainElement = applicationWindowAttribute(
+                    kAXMainWindowAttribute as CFString,
+                    for: frontmostApp
+                ),
+                let mainWindow = frontmostWindows.first(where: { CFEqual($0.element, mainElement) })
+            {
+                return mainWindow
+            }
+
+            if let firstWindow = frontmostWindows.first {
+                return firstWindow
+            }
+        }
+
+        let windows = fetchWindows(topology: topology, excludedBundleIDs: excludedBundleIDs)
+        if let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           let frontmostWindow = windows.first(where: { $0.bundleIdentifier == frontmostBundleID })
+        {
+            return frontmostWindow
+        }
+
+        return windows.first(where: \.isFocused)
     }
 
     func raise(window: LiveWindow) -> Bool {
@@ -105,6 +139,20 @@ final class WindowCatalogService {
 
     func sameWindow(_ lhs: LiveWindow, _ rhs: LiveWindow) -> Bool {
         CFEqual(lhs.element, rhs.element)
+    }
+
+    private func eligibleFrontmostApplication(excludedBundleIDs: Set<String>) -> NSRunningApplication? {
+        guard let application = NSWorkspace.shared.frontmostApplication,
+              application.activationPolicy == .regular,
+              !application.isTerminated,
+              let bundleIdentifier = application.bundleIdentifier,
+              bundleIdentifier != Bundle.main.bundleIdentifier,
+              !excludedBundleIDs.contains(bundleIdentifier)
+        else {
+            return nil
+        }
+
+        return application
     }
 
     private func windows(for application: NSRunningApplication, topology: DisplayTopology) -> [LiveWindow] {
@@ -187,6 +235,20 @@ final class WindowCatalogService {
         }
 
         return scoredDisplays.max(by: { lhs, rhs in lhs.1 < rhs.1 })?.0.id ?? topology.fallbackDisplay?.id
+    }
+
+    private func applicationWindowAttribute(_ attribute: CFString, for application: NSRunningApplication) -> AXUIElement? {
+        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        var value: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(appElement, attribute, &value) == .success,
+            let value,
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+
+        return (value as! AXUIElement)
     }
 
     private func arrayAttribute(_ attribute: CFString, from element: AXUIElement) -> [AXUIElement] {

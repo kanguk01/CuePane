@@ -20,10 +20,23 @@ final class RecallCoordinator {
     }
 
     func bestRecord(for liveWindow: LiveWindow, records: [AnchorRecord]) -> AnchorRecord? {
-        let candidates = records.map { ($0, score(snapshot: $0.anchorWindow, window: liveWindow)) }
-        guard let best = candidates.max(by: { $0.1 < $1.1 }), best.1 >= 48 else {
+        let candidates = records.compactMap { record -> (AnchorRecord, Int)? in
+            guard record.anchorWindow.bundleIdentifier == liveWindow.bundleIdentifier else {
+                return nil
+            }
+
+            let matchScore = score(snapshot: record.anchorWindow, window: liveWindow)
+            guard matchScore >= 72 else {
+                return nil
+            }
+
+            return (record, matchScore)
+        }
+
+        guard let best = candidates.max(by: { $0.1 < $1.1 }) else {
             return nil
         }
+
         return best.0
     }
 
