@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum WindowAppKind: String, Codable, CaseIterable {
@@ -58,6 +59,7 @@ struct RecallResult: Hashable {
     var crossSpacePID: pid_t?
     var crossSpaceTitle: String?
     var crossSpaceNormalizedTitle: String?
+    var crossSpaceWindowNumber: CGWindowID?
 
     var summary: String {
         var components: [String] = [

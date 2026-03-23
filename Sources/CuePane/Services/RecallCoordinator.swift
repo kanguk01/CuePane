@@ -110,7 +110,8 @@ final class RecallCoordinator {
                 spaceSwitched: true,
                 crossSpacePID: match.ownerPID,
                 crossSpaceTitle: anchorSnapshot.title,
-                crossSpaceNormalizedTitle: anchorSnapshot.normalizedTitle
+                crossSpaceNormalizedTitle: anchorSnapshot.normalizedTitle,
+                crossSpaceWindowNumber: match.windowNumber
             )
         }
 
@@ -241,7 +242,15 @@ final class RecallCoordinator {
     }
 
     private func bestMatch(for snapshot: WindowSnapshot, windows: [LiveWindow]) -> (index: Int, window: LiveWindow, score: Int)? {
-        windows.enumerated()
+        // CGWindowID 정확 매칭 우선 (같은 앱의 다른 탭 방지)
+        if let savedWID = snapshot.windowNumber, savedWID != 0 {
+            if let exactIndex = windows.firstIndex(where: { Int($0.windowNumber) == savedWID }) {
+                return (exactIndex, windows[exactIndex], 200)
+            }
+        }
+
+        // windowNumber 매칭 실패 시 (앱 재시작 등) 기존 스코어 폴백
+        return windows.enumerated()
             .compactMap { index, window -> (Int, LiveWindow, Int)? in
                 guard window.bundleIdentifier == snapshot.bundleIdentifier else {
                     return nil

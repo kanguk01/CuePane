@@ -2,6 +2,18 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+@_silgen_name("_CGSDefaultConnection")
+func _CGSDefaultConnection() -> Int32
+
+@_silgen_name("CGSCopySpacesForWindows")
+func CGSCopySpacesForWindows(_ cid: Int32, _ mask: Int32, _ windows: CFArray) -> CFArray
+
+@_silgen_name("CGSGetActiveSpace")
+func CGSGetActiveSpace(_ cid: Int32) -> UInt64
+
+@_silgen_name("CGSCopyManagedDisplaySpaces")
+func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> CFArray
+
 struct LiveWindow {
     let appName: String
     let bundleIdentifier: String
@@ -18,6 +30,7 @@ struct LiveWindow {
     let isFocused: Bool
     let application: NSRunningApplication
     let element: AXUIElement
+    let windowNumber: CGWindowID
 }
 
 enum WindowInventoryScope {
@@ -90,7 +103,8 @@ final class WindowCatalogService {
                         windowOrder: index,
                         isFocused: isFocused,
                         application: application,
-                        element: windowElement
+                        element: windowElement,
+                        windowNumber: windowNumber(for: windowElement, pid: application.processIdentifier, title: title, frame: frame)
                     )
                 }
             }
@@ -357,7 +371,8 @@ final class WindowCatalogService {
             windowOrder: 0,
             isFocused: isFocused,
             application: application,
-            element: element
+            element: element,
+            windowNumber: windowNumber(for: element, pid: pid, title: title, frame: frame)
         )
     }
 
@@ -556,9 +571,31 @@ final class WindowCatalogService {
                 windowOrder: index,
                 isFocused: isFocused,
                 application: application,
-                element: windowElement
+                element: windowElement,
+                windowNumber: windowNumber(for: windowElement, pid: application.processIdentifier, title: title, frame: frame)
             )
         }
+    }
+
+    private func windowNumber(for element: AXUIElement, pid: pid_t, title: String, frame: CGRect) -> CGWindowID {
+        guard let list = CGWindowListCopyWindowInfo([.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return 0
+        }
+        for entry in list {
+            guard
+                let entryPID = (entry[kCGWindowOwnerPID as String] as? pid_t) ?? (entry[kCGWindowOwnerPID as String] as? Int).map(pid_t.init),
+                entryPID == pid,
+                let boundsDict = entry[kCGWindowBounds as String] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsDict)
+            else { continue }
+            if abs(bounds.origin.x - frame.origin.x) < 2 &&
+               abs(bounds.origin.y - frame.origin.y) < 2 &&
+               abs(bounds.width - frame.width) < 2 &&
+               abs(bounds.height - frame.height) < 2 {
+                return CGWindowID(entry[kCGWindowNumber as String] as? Int ?? 0)
+            }
+        }
+        return 0
     }
 
     private func isStandardWindow(subrole: String) -> Bool {
@@ -644,43 +681,155 @@ final class WindowCatalogService {
     }
 
     /// 다른 Space에 있는 앱의 특정 창으로 전환합니다.
-    func switchToWindowOnOtherSpace(pid: pid_t, savedTitle: String, savedNormalizedTitle: String) -> Bool {
-        guard let app = NSRunningApplication(processIdentifier: pid),
-              let appName = app.localizedName else {
+    func switchToWindowOnOtherSpace(pid: pid_t, targetWindowNumber: CGWindowID = 0, savedTitle: String, savedNormalizedTitle: String) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid) else {
             return false
         }
 
-        // 1. 현재 Space의 해당 앱 창을 일시 최소화 (같은 앱 창이 있으면 Space 전환 안 됨)
+        // 현재 Space에 같은 앱 창이 있는지 확인
         let appElement = AXUIElementCreateApplication(pid)
         let currentWindows = arrayAttribute(kAXWindowsAttribute as CFString, from: appElement)
-        var minimizedElements: [AXUIElement] = []
-        for windowElement in currentWindows {
-            guard
-                let role = stringAttribute(kAXRoleAttribute as CFString, from: windowElement),
-                role == kAXWindowRole as String
-            else { continue }
-            let isMinimized = boolAttribute(kAXMinimizedAttribute as CFString, from: windowElement) ?? false
-            if !isMinimized {
-                _ = set(bool: true, attribute: kAXMinimizedAttribute as CFString, for: windowElement)
-                minimizedElements.append(windowElement)
-            }
+        let hasWindowsOnCurrentSpace = currentWindows.contains { elem in
+            guard let role = stringAttribute(kAXRoleAttribute as CFString, from: elem),
+                  role == kAXWindowRole as String else { return false }
+            return !(boolAttribute(kAXMinimizedAttribute as CFString, from: elem) ?? false)
         }
 
-        // 2. AppleScript activate (NSRunningApplication.activate보다 Space 전환이 확실)
+        if hasWindowsOnCurrentSpace && targetWindowNumber != 0 {
+            // 같은 앱이 현재 Space에 있으면 CGS API로 직접 Space 이동
+            return switchSpaceDirectly(targetWindowNumber: targetWindowNumber, pid: pid, savedTitle: savedTitle, savedNormalizedTitle: savedNormalizedTitle)
+        }
+
+        // 같은 앱이 현재 Space에 없으면 기존 방식 (activate → Space 전환)
+        guard let appName = app.localizedName else { return false }
         let escapedName = appName.replacingOccurrences(of: "\"", with: "\\\"")
         let script = NSAppleScript(source: "tell application \"\(escapedName)\" to activate")
         script?.executeAndReturnError(nil)
 
-        // 3. 전환 대기 후 타겟 창 raise
         Thread.sleep(forTimeInterval: 0.5)
-        let raised = raiseWindowByTitle(pid: pid, savedTitle: savedTitle, savedNormalizedTitle: savedNormalizedTitle)
+        var raised = false
+        if targetWindowNumber != 0 {
+            raised = raiseWindowByNumber(pid: pid, targetWindowNumber: targetWindowNumber)
+        }
+        if !raised {
+            raised = raiseWindowByTitle(pid: pid, savedTitle: savedTitle, savedNormalizedTitle: savedNormalizedTitle)
+        }
+        return raised
+    }
 
-        // 4. 최소화했던 창 복원
-        for element in minimizedElements {
-            _ = set(bool: false, attribute: kAXMinimizedAttribute as CFString, for: element)
+    private func switchSpaceDirectly(targetWindowNumber: CGWindowID, pid: pid_t, savedTitle: String, savedNormalizedTitle: String) -> Bool {
+        let cid = _CGSDefaultConnection()
+
+        // 1. 타겟 창이 있는 Space ID
+        let windowArray = [Int(targetWindowNumber)] as CFArray
+        guard
+            let targetSpaces = CGSCopySpacesForWindows(cid, 0x7, windowArray) as? [UInt64],
+            let targetSpaceID = targetSpaces.first
+        else { return false }
+
+        // 2. 전체 Space 목록에서 번호 매핑
+        guard let displaySpaces = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] else { return false }
+
+        var orderedSpaceIDs: [UInt64] = []
+        for display in displaySpaces {
+            guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
+            for space in spaces {
+                if let spaceID = space["id64"] as? UInt64 {
+                    orderedSpaceIDs.append(spaceID)
+                }
+            }
         }
 
+        let currentSpaceID = CGSGetActiveSpace(cid)
+        guard
+            let currentIndex = orderedSpaceIDs.firstIndex(of: currentSpaceID),
+            let targetIndex = orderedSpaceIDs.firstIndex(of: targetSpaceID)
+        else { return false }
+
+        let currentNum = currentIndex + 1
+        let targetNum = targetIndex + 1
+
+        guard currentNum != targetNum else { return false }
+
+        // 3. Space 이동 (키보드 시뮬레이션)
+        if targetNum <= 9 {
+            simulateCtrlNumber(targetNum)
+        } else {
+            let diff = targetNum - currentNum
+            let direction: UInt16 = diff > 0 ? 124 : 123 // 124=Right, 123=Left
+            for _ in 0..<abs(diff) {
+                simulateCtrlArrow(direction)
+                Thread.sleep(forTimeInterval: 0.35)
+            }
+        }
+
+        Thread.sleep(forTimeInterval: 0.4)
+
+        // 4. 앱 활성화 + 정확한 탭 raise
+        if let app = NSRunningApplication(processIdentifier: pid) {
+            _ = app.activate()
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        var raised = raiseWindowByNumber(pid: pid, targetWindowNumber: targetWindowNumber)
+        if !raised {
+            raised = raiseWindowByTitle(pid: pid, savedTitle: savedTitle, savedNormalizedTitle: savedNormalizedTitle)
+        }
         return raised
+    }
+
+    // Ctrl+숫자 (1~9) 키 시뮬레이션
+    private func simulateCtrlNumber(_ number: Int) {
+        // macOS 키코드: 1=18, 2=19, 3=20, 4=21, 5=23, 6=22, 7=26, 8=28, 9=25
+        let keyCodes: [Int: UInt16] = [1: 18, 2: 19, 3: 20, 4: 21, 5: 23, 6: 22, 7: 26, 8: 28, 9: 25]
+        guard let keyCode = keyCodes[number] else { return }
+
+        let source = CGEventSource(stateID: .hidSystemState)
+        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
+            keyDown.flags = .maskControl
+            keyDown.post(tap: .cghidEventTap)
+        }
+        if let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
+            keyUp.flags = .maskControl
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+
+    // Ctrl+방향키 시뮬레이션
+    private func simulateCtrlArrow(_ keyCode: UInt16) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
+            keyDown.flags = .maskControl
+            keyDown.post(tap: .cghidEventTap)
+        }
+        if let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
+            keyUp.flags = .maskControl
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// CGWindowID로 정확한 창을 찾아 raise합니다.
+    func raiseWindowByNumber(pid: pid_t, targetWindowNumber: CGWindowID) -> Bool {
+        let appElement = AXUIElementCreateApplication(pid)
+        let windows = arrayAttribute(kAXWindowsAttribute as CFString, from: appElement)
+        for windowElement in windows {
+            guard
+                let role = stringAttribute(kAXRoleAttribute as CFString, from: windowElement),
+                role == kAXWindowRole as String,
+                let position = pointAttribute(kAXPositionAttribute as CFString, from: windowElement),
+                let size = sizeAttribute(kAXSizeAttribute as CFString, from: windowElement)
+            else { continue }
+            let title = stringAttribute(kAXTitleAttribute as CFString, from: windowElement) ?? ""
+            let frame = CGRect(origin: position, size: size)
+            let wid = windowNumber(for: windowElement, pid: pid, title: title, frame: frame)
+            if wid == targetWindowNumber {
+                let result = AXUIElementPerformAction(windowElement, kAXRaiseAction as CFString)
+                _ = set(bool: true, attribute: kAXMainAttribute as CFString, for: windowElement)
+                _ = set(bool: true, attribute: kAXFocusedAttribute as CFString, for: windowElement)
+                return result == .success
+            }
+        }
+        return false
     }
 
     /// Space 전환 후 AX로 특정 창을 찾아 올립니다.

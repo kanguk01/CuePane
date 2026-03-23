@@ -518,9 +518,11 @@ final class AppModel: ObservableObject {
             let targetPID = pid
             let targetTitle = title
             let targetNormTitle = normalizedTitle
+            let targetWID = result.crossSpaceWindowNumber ?? 0
             DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.15) {
                 _ = catalog.switchToWindowOnOtherSpace(
                     pid: targetPID,
+                    targetWindowNumber: targetWID,
                     savedTitle: targetTitle,
                     savedNormalizedTitle: targetNormTitle
                 )

@@ -72,7 +72,8 @@ final class ContextCaptureService {
             normalizedFrame: NormalizedRect(globalFrame: window.frame, displayFrame: display.visibleFrame.cgRect),
             captureOrder: captureOrder,
             isFocused: window.isFocused,
-            capturedAt: Date()
+            capturedAt: Date(),
+            windowNumber: Int(window.windowNumber)
         )
     }
 }
