@@ -10,7 +10,8 @@ final class WindowCoordinator {
             id: "search",
             title: "CuePane 검색",
             size: NSSize(width: 520, height: 480),
-            content: AnyView(SearchOverlayView().environmentObject(appModel))
+            content: AnyView(SearchOverlayView().environmentObject(appModel)),
+            hidesOnDeactivate: true
         )
     }
 
@@ -52,7 +53,8 @@ final class WindowCoordinator {
         id: String,
         title: String,
         size: NSSize,
-        content: AnyView
+        content: AnyView,
+        hidesOnDeactivate: Bool = false
     ) {
         let controller: NSWindowController
         let sizedContent = AnyView(
@@ -91,6 +93,7 @@ final class WindowCoordinator {
             window.toolbarStyle = .unifiedCompact
             window.animationBehavior = .utilityWindow
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            window.hidesOnDeactivate = hidesOnDeactivate
             window.center()
             controller = NSWindowController(window: window)
             windows[id] = controller
