@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="CuePane"
-VERSION="${CUEPANE_VERSION:-0.1.0}"
+VERSION="${CUEPANE_VERSION:-0.2.0}"
 DIST_DIR="$REPO_ROOT/dist"
 STAGE_DIR="$REPO_ROOT/.build/dmg-stage"
 APP_DIR="$STAGE_DIR/$APP_NAME.app"
@@ -56,6 +56,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>SUPublicEDKey</key>
+  <string>FVXsi1mAJvPgsjUCmA9vJxk6A0Pio3uBEKGccH8HyXw=</string>
+  <key>SUFeedURL</key>
+  <string>https://kanguk01.github.io/CuePane/appcast.xml</string>
 </dict>
 </plist>
 PLIST
