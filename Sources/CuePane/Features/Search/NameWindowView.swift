@@ -23,7 +23,6 @@ struct NameWindowView: View {
                 placeholder: "앵커 이름",
                 text: $appModel.namingDraft,
                 font: .systemFont(ofSize: 18),
-                onSubmitAttempt: appModel.noteNamingSubmitAttempt,
                 onSubmit: appModel.saveNamingDraft
             )
             .frame(height: 30)
@@ -39,7 +38,6 @@ struct NameWindowView: View {
                 Spacer(minLength: 0)
 
                 Button(appModel.namingSaveButtonTitle) {
-                    appModel.noteNamingSubmitAttempt(source: "저장 버튼")
                     appModel.saveNamingDraft()
                 }
                 .buttonStyle(.borderedProminent)

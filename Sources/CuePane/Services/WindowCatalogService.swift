@@ -158,7 +158,6 @@ final class WindowCatalogService {
         // 핫키 시점에 캡처한 AX element로 직접 매칭 (포커스 전환 후에도 정확한 창 특정 가능)
         if let preferredWindowElement {
             let matched = window(matchingElement: preferredWindowElement, topology: topology, excludedBundleIDs: excludedBundleIDs)
-            print("[CuePane] element매칭 시도 · 결과 \(matched == nil ? "nil" : matched!.appName)")
             if let matched {
                 return matched
             }
@@ -288,7 +287,6 @@ final class WindowCatalogService {
     ) -> LiveWindow? {
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success else {
-            print("[CuePane] element매칭 실패 · PID 추출 불가")
             return nil
         }
 
@@ -298,17 +296,14 @@ final class WindowCatalogService {
             !application.isTerminated,
             let bundleIdentifier = application.bundleIdentifier
         else {
-            print("[CuePane] element매칭 실패 · 앱 조회 불가 PID=\(pid)")
             return nil
         }
 
         if bundleIdentifier == Bundle.main.bundleIdentifier {
-            print("[CuePane] element매칭 스킵 · 자기 자신 \(bundleIdentifier)")
             return nil
         }
 
         if excludedBundleIDs.contains(bundleIdentifier) {
-            print("[CuePane] element매칭 스킵 · 제외 앱 \(bundleIdentifier)")
             return nil
         }
 
@@ -317,7 +312,6 @@ final class WindowCatalogService {
             let role = stringAttribute(kAXRoleAttribute as CFString, from: element),
             role == kAXWindowRole as String
         else {
-            print("[CuePane] element매칭 실패 · role 불일치 (role=\(stringAttribute(kAXRoleAttribute as CFString, from: element) ?? "nil"))")
             return nil
         }
 
@@ -325,7 +319,6 @@ final class WindowCatalogService {
             let position = pointAttribute(kAXPositionAttribute as CFString, from: element),
             let size = sizeAttribute(kAXSizeAttribute as CFString, from: element)
         else {
-            print("[CuePane] element매칭 실패 · position/size 조회 불가")
             return nil
         }
 
@@ -340,7 +333,6 @@ final class WindowCatalogService {
             isStandardWindow(subrole: subrole),
             let displayID = displayID(for: frame, topology: topology)
         else {
-            print("[CuePane] element매칭 실패 · 필터 탈락 min=\(isMinimized) frame=\(frame) subrole=\(subrole)")
             return nil
         }
 
@@ -353,8 +345,6 @@ final class WindowCatalogService {
         let isFocused = boolAttribute(kAXMainAttribute as CFString, from: element)
             ?? boolAttribute(kAXFocusedAttribute as CFString, from: element)
             ?? false
-
-        print("[CuePane] element매칭 성공 · \(application.localizedName ?? bundleIdentifier) · \(title)")
 
         return LiveWindow(
             appName: application.localizedName ?? bundleIdentifier,

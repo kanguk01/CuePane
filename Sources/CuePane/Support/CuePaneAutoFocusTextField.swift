@@ -5,11 +5,10 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
     var font: NSFont
-    var onSubmitAttempt: (String) -> Void = { _ in }
     var onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSubmitAttempt: onSubmitAttempt, onSubmit: onSubmit)
+        Coordinator(text: $text, onSubmit: onSubmit)
     }
 
     func makeNSView(context: Context) -> NSTextField {
@@ -35,7 +34,6 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
 
         nsView.placeholderString = placeholder
         nsView.font = font
-        context.coordinator.onSubmitAttempt = onSubmitAttempt
         context.coordinator.onSubmit = onSubmit
         context.coordinator.attach(nsView)
     }
@@ -43,15 +41,13 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate {
         @Binding private var text: String
-        var onSubmitAttempt: (String) -> Void
         var onSubmit: () -> Void
 
         private weak var textField: NSTextField?
         private var hasFocused = false
 
-        init(text: Binding<String>, onSubmitAttempt: @escaping (String) -> Void, onSubmit: @escaping () -> Void) {
+        init(text: Binding<String>, onSubmit: @escaping () -> Void) {
             _text = text
-            self.onSubmitAttempt = onSubmitAttempt
             self.onSubmit = onSubmit
         }
 
@@ -82,18 +78,11 @@ struct CuePaneAutoFocusTextField: NSViewRepresentable {
                 commandSelector == #selector(NSResponder.insertNewline(_:)) ||
                 commandSelector == #selector(NSResponder.insertLineBreak(_:))
             {
-                onSubmitAttempt("입력창 Enter")
                 onSubmit()
                 return true
             }
 
             return false
-        }
-
-        @objc
-        func submit() {
-            onSubmitAttempt("입력창 기본 액션")
-            onSubmit()
         }
 
         private func focusIfPossible() {
