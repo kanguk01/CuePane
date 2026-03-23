@@ -1,3 +1,4 @@
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
@@ -27,6 +28,30 @@ struct SettingsView: View {
                             set: { appModel.preferences.showOnboardingOnLaunch = $0 }
                         )
                     )
+                }
+
+                Section("시스템") {
+                    if #available(macOS 13.0, *) {
+                        Toggle("맥 시작 시 자동 실행", isOn: Binding(
+                            get: { SMAppService.mainApp.status == .enabled },
+                            set: { newValue in
+                                do {
+                                    if newValue { try SMAppService.mainApp.register() }
+                                    else { try SMAppService.mainApp.unregister() }
+                                } catch {}
+                            }
+                        ))
+                    }
+
+                    Picker("앵커 자동 정리", selection: Binding(
+                        get: { appModel.preferences.anchorExpirationDays },
+                        set: { appModel.preferences.anchorExpirationDays = $0 }
+                    )) {
+                        Text("사용 안 함").tag(0)
+                        Text("7일 후").tag(7)
+                        Text("30일 후").tag(30)
+                        Text("90일 후").tag(90)
+                    }
                 }
 
                 Section("제외 앱") {
