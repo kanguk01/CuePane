@@ -84,32 +84,18 @@ struct SearchOverlayView: View {
         let results = appModel.filteredPresentations
 
         if results.isEmpty {
-            if appModel.anchors.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "rectangle.stack.badge.plus")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    Text("저장된 앵커가 없습니다")
-                        .font(.headline)
-                    Text("⌘⇧N으로 현재 창에 이름을 붙여보세요")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+                Text("결과 없음")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("현재 창 이름 붙이기") {
+                    appModel.dismissSearch()
+                    appModel.beginNamingCurrentWindow()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                VStack(spacing: 8) {
-                    Text("결과 없음")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Button("현재 창 이름 붙이기") {
-                        appModel.dismissSearch()
-                        appModel.beginNamingCurrentWindow()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -134,17 +120,6 @@ struct SearchOverlayView: View {
                     }
                 }
             }
-
-            Divider()
-
-            HStack(spacing: 12) {
-                Text("↑↓ 이동")
-                Text("↵ 복원")
-                Text("esc 닫기")
-            }
-            .font(.caption2)
-            .foregroundStyle(.quaternary)
-            .padding(.vertical, 6)
         }
     }
 
