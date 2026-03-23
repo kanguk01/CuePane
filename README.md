@@ -129,7 +129,8 @@ CuePane은 macOS **손쉬운 사용** 권한을 사용합니다.
 
 > Cross-Space 전환 기능을 사용하려면 **시스템 설정 > 키보드 > 키보드 단축키 > Mission Control**에서 "데스크탑 X로 전환" 단축키를 활성화하세요.
 
-## Packaging
+<details>
+<summary><h2>Packaging</h2></summary>
 
 ```bash
 ./scripts/build_dmg.sh
@@ -137,7 +138,10 @@ CuePane은 macOS **손쉬운 사용** 권한을 사용합니다.
 
 DMG는 `dist/CuePane.dmg`에 생성됩니다.
 
-## Architecture
+</details>
+
+<details>
+<summary><h2>Architecture</h2></summary>
 
 ```text
 Sources/CuePane/
@@ -152,8 +156,6 @@ Sources/CuePane/
 └── Support/        # UI 컴포넌트, 아이콘
 ```
 
-핵심 서비스:
-
 | 서비스 | 역할 |
 |--------|------|
 | `WindowCatalogService` | AX + CGWindowList 기반 창 열거, 이동, 포커스, Cross-Space 감지 |
@@ -162,6 +164,21 @@ Sources/CuePane/
 | `AnchorStore` | 로컬 JSON 저장소, 가져오기/내보내기 |
 | `AppModel` | 검색, 즐겨찾기, 토스트, 빠른 재호출 흐름 조율 |
 | `GlobalHotKeyManager` | Carbon 핫키 + AX 포커스 스냅샷 캡처 |
+
+</details>
+
+<details>
+<summary><h2>Support</h2></summary>
+
+CuePane이 유용하셨다면 커피 한 잔 사주세요 :)
+
+<div align="center">
+<img src="assets/donate-qr.png" width="200" alt="Donate">
+<br>
+<sub>Toss로 후원하기</sub>
+</div>
+
+</details>
 
 ## License
 
