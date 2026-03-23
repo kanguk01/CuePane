@@ -15,7 +15,10 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "CuePane"
+            name: "CuePane",
+            linkerSettings: [
+                .unsafeFlags(["-F/System/Library/PrivateFrameworks", "-framework", "SkyLight"]),
+            ]
         ),
     ]
 )

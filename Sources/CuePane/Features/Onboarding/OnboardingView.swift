@@ -36,7 +36,7 @@ struct OnboardingView: View {
                     )
                     statusChip(
                         title: "\(appModel.anchorCount)개 앵커 저장됨",
-                        color: CuePaneChrome.accent
+                        color: Color.accentColor
                     )
                 }
             }
@@ -59,7 +59,7 @@ struct OnboardingView: View {
                     index: "2",
                     title: "현재 창 이름 붙이기",
                     body: "예를 들어 터미널 창에 '서버로그' 같은 이름을 붙이면, 같은 모니터에 보이는 Slack 같은 보조 창도 함께 저장됩니다.",
-                    accent: CuePaneChrome.accent
+                    accent: Color.accentColor
                 )
                 onboardingCard(
                     index: "3",

@@ -1,10 +1,6 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="256" height="256" rx="60" fill="#0D1B2A"/>
-  <rect x="44" y="62" width="126" height="120" rx="26" fill="#4C6FFF" fill-opacity="0.28"/>
-  <rect x="82" y="44" width="130" height="130" rx="28" fill="#F7FAFF"/>
-  <rect x="100" y="74" width="74" height="18" rx="9" fill="#4C6FFF"/>
-  <rect x="100" y="108" width="92" height="16" rx="8" fill="#C9D7FF"/>
-  <rect x="100" y="136" width="70" height="16" rx="8" fill="#DDE6FF"/>
-  <path d="M51 102C51 90.9543 59.9543 82 71 82H104V102C104 113.046 95.0457 122 84 122H71C59.9543 122 51 113.046 51 102Z" fill="#18C29C"/>
-  <circle cx="74" cy="102" r="11" fill="#0D1B2A"/>
+  <rect width="256" height="256" rx="60" fill="#0F172A"/>
+  <rect x="58" y="58" width="130" height="130" rx="16" fill="#93A4BF" fill-opacity="0.5"/>
+  <rect x="76" y="76" width="130" height="130" rx="16" fill="#F8FAFC"/>
+  <circle cx="76" cy="76" r="10" fill="#38BDF8"/>
 </svg>

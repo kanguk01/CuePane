@@ -2,36 +2,16 @@ import AppKit
 import SwiftUI
 
 enum CuePaneChrome {
-    static let canvasTop = Color(red: 0.96, green: 0.97, blue: 0.99)
-    static let canvasBottom = Color(red: 0.92, green: 0.95, blue: 0.98)
-    static let accent = Color(red: 0.22, green: 0.45, blue: 0.98)
-    static let mint = Color(red: 0.10, green: 0.72, blue: 0.58)
-    static let amber = Color(red: 0.93, green: 0.60, blue: 0.17)
-    static let danger = Color(red: 0.83, green: 0.30, blue: 0.26)
+    static let mint = Color(red: 0.18, green: 0.65, blue: 0.53)
+    static let amber = Color(red: 0.85, green: 0.55, blue: 0.20)
+    static let danger = Color(red: 0.78, green: 0.32, blue: 0.28)
 }
 
 struct CuePaneWindowBackground: View {
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [CuePaneChrome.canvasTop, CuePaneChrome.canvasBottom],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Circle()
-                .fill(CuePaneChrome.accent.opacity(0.12))
-                .frame(width: 340, height: 340)
-                .blur(radius: 30)
-                .offset(x: 220, y: -180)
-
-            Circle()
-                .fill(CuePaneChrome.mint.opacity(0.10))
-                .frame(width: 220, height: 220)
-                .blur(radius: 24)
-                .offset(x: -180, y: 170)
-        }
-        .ignoresSafeArea()
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .ignoresSafeArea()
     }
 }
 
@@ -39,7 +19,7 @@ struct CuePaneSurface<Content: View>: View {
     private let padding: CGFloat
     @ViewBuilder private let content: Content
 
-    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+    init(padding: CGFloat = 12, @ViewBuilder content: () -> Content) {
         self.padding = padding
         self.content = content()
     }
@@ -47,12 +27,11 @@ struct CuePaneSurface<Content: View>: View {
     var body: some View {
         content
             .padding(padding)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(0.06), radius: 18, x: 0, y: 10)
     }
 }
 
@@ -62,10 +41,10 @@ struct CuePaneStatusBadge: View {
 
     var body: some View {
         Text(title)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(color.opacity(0.14), in: Capsule())
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12), in: Capsule())
             .foregroundStyle(color)
     }
 }
@@ -75,15 +54,14 @@ struct CuePaneMetricTile: View {
     let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             Text(value)
-                .font(.headline.weight(.semibold))
+                .font(.subheadline.weight(.medium))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
     }
 }
 
@@ -92,10 +70,10 @@ struct CuePaneShortcutBadge: View {
 
     var body: some View {
         Text(title)
-            .font(.system(.caption, design: .monospaced).weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .font(.system(.caption2, design: .monospaced).weight(.medium))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             .foregroundStyle(.secondary)
     }
 }

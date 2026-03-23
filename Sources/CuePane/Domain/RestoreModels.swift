@@ -54,6 +54,11 @@ struct RecallResult: Hashable {
     let unresolvedTitles: [String]
     let moveFailedTitles: [String]
     let raiseFailedTitles: [String]
+    var spaceSwitched: Bool = false
+    var crossSpacePID: pid_t?
+    var crossSpaceCGWindowID: UInt32?
+    var crossSpaceTitle: String?
+    var crossSpaceNormalizedTitle: String?
 
     var summary: String {
         var components: [String] = [
@@ -90,6 +95,7 @@ struct AnchorPresentation: Identifiable, Hashable {
     let record: AnchorRecord
     let matchedCount: Int
     let anchorLive: Bool
+    var crossSpace: Bool = false
 
     var id: UUID { record.id }
 
@@ -99,10 +105,10 @@ struct AnchorPresentation: Identifiable, Hashable {
 
     var statusLabel: String {
         if anchorLive && missingCount == 0 {
-            return "준비됨"
+            return crossSpace ? "준비됨 · 다른 데스크톱" : "준비됨"
         }
         if anchorLive {
-            return "부분 복원"
+            return crossSpace ? "부분 복원 · 다른 데스크톱" : "부분 복원"
         }
         return "앵커 없음"
     }

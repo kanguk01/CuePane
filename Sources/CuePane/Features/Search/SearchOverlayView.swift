@@ -5,17 +5,13 @@ struct SearchOverlayView: View {
     @FocusState private var isQueryFocused: Bool
 
     var body: some View {
-        ZStack {
-            CuePaneWindowBackground()
-
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                queryField
-                resultsSection
-            }
-            .padding(24)
+        VStack(spacing: 0) {
+            queryField
+            Divider()
+            resultsSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.ultraThinMaterial)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isQueryFocused = true
             Task { @MainActor in
@@ -28,55 +24,30 @@ struct SearchOverlayView: View {
         }
     }
 
-    private var header: some View {
-        CuePaneSurface(padding: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CuePane 검색")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                    Text("이름, 앱명, 창 제목으로 검색하고 필요한 작업 문맥을 바로 다시 부르세요.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 8) {
-                    CuePaneShortcutBadge(title: "Enter 문맥")
-                    CuePaneShortcutBadge(title: "Esc 닫기")
-                }
-            }
-        }
-    }
-
     private var queryField: some View {
-        CuePaneSurface(padding: 14) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("빠른 검색")
-                    .font(.headline)
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.title2)
+                .foregroundStyle(.secondary)
 
-                TextField("예: 서버로그, PR 482, 배포", text: $appModel.searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.title3)
-                    .focused($isQueryFocused)
-                    .onSubmit {
-                        guard let first = appModel.filteredPresentations.first else {
-                            return
-                        }
-                        appModel.recall(first, mode: .context, destination: .originalDisplay)
+            TextField("검색", text: $appModel.searchQuery)
+                .textFieldStyle(.plain)
+                .font(.title2)
+                .focused($isQueryFocused)
+                .onSubmit {
+                    guard let first = appModel.filteredPresentations.first else {
+                        return
                     }
-
-                HStack(spacing: 8) {
-                    CuePaneStatusBadge(title: "\(appModel.filteredPresentations.count)개 결과", color: CuePaneChrome.accent)
-                    CuePaneStatusBadge(title: "\(appModel.favoriteCount)개 즐겨찾기", color: CuePaneChrome.mint)
+                    appModel.recall(first, mode: .context, destination: .originalDisplay)
                 }
 
-
-
+            HStack(spacing: 6) {
+                CuePaneStatusBadge(title: "\(appModel.filteredPresentations.count)개", color: .accentColor)
+                CuePaneShortcutBadge(title: "esc")
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     @ViewBuilder
@@ -84,22 +55,18 @@ struct SearchOverlayView: View {
         let results = appModel.filteredPresentations
 
         if results.isEmpty {
-            CuePaneSurface {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("검색 결과가 없습니다.")
-                        .font(.headline)
-                    Text("현재 창 이름 붙이기로 먼저 앵커를 하나 만들어 두면 여기서 바로 찾을 수 있습니다.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Button("현재 창 이름 붙이기") {
-                        appModel.dismissSearch()
-                        appModel.beginNamingCurrentWindow()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(CuePaneChrome.accent)
+            VStack(spacing: 8) {
+                Text("결과 없음")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("현재 창 이름 붙이기") {
+                    appModel.dismissSearch()
+                    appModel.beginNamingCurrentWindow()
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             let favoriteIDs = Set(appModel.favoritePresentations.map(\.id))
             let recentIDs = Set(appModel.recentPresentations.map(\.id))
@@ -107,136 +74,138 @@ struct SearchOverlayView: View {
                 !favoriteIDs.contains(presentation.id) && !recentIDs.contains(presentation.id)
             }
 
-            CuePaneSurface(padding: 12) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        if appModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !appModel.favoritePresentations.isEmpty {
-                            sectionTitle("즐겨찾기")
+            ScrollView {
+                LazyVStack(spacing: 1) {
+                    if appModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !appModel.favoritePresentations.isEmpty {
+                        sectionHeader("즐겨찾기")
 
-                            ForEach(appModel.favoritePresentations) { presentation in
-                                AnchorRowView(presentation: presentation)
-                                    .environmentObject(appModel)
-                            }
+                        ForEach(appModel.favoritePresentations) { presentation in
+                            AnchorRowView(presentation: presentation)
+                                .environmentObject(appModel)
+                        }
 
-                            if !appModel.recentPresentations.isEmpty {
-                                sectionTitle("최근 작업")
-                            }
+                        if !appModel.recentPresentations.isEmpty {
+                            sectionHeader("최근 작업")
+                        }
 
-                            ForEach(appModel.recentPresentations) { presentation in
-                                AnchorRowView(presentation: presentation)
-                                    .environmentObject(appModel)
-                            }
+                        ForEach(appModel.recentPresentations) { presentation in
+                            AnchorRowView(presentation: presentation)
+                                .environmentObject(appModel)
+                        }
 
-                            if !remainingPresentations.isEmpty {
-                                sectionTitle("전체 앵커")
-                            }
+                        if !remainingPresentations.isEmpty {
+                            sectionHeader("전체")
+                        }
 
-                            ForEach(remainingPresentations) { presentation in
-                                AnchorRowView(presentation: presentation)
-                                    .environmentObject(appModel)
-                            }
-                        } else {
-                            ForEach(results) { presentation in
-                                AnchorRowView(presentation: presentation)
-                                    .environmentObject(appModel)
-                            }
+                        ForEach(remainingPresentations) { presentation in
+                            AnchorRowView(presentation: presentation)
+                                .environmentObject(appModel)
+                        }
+                    } else {
+                        ForEach(results) { presentation in
+                            AnchorRowView(presentation: presentation)
+                                .environmentObject(appModel)
                         }
                     }
                 }
+                .padding(6)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    private func sectionTitle(_ title: String) -> some View {
+    private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.top, 4)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct AnchorRowView: View {
     @EnvironmentObject private var appModel: AppModel
+    @State private var isHovered = false
     let presentation: AnchorPresentation
 
     var body: some View {
-        CuePaneSurface(padding: 12) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(presentation.record.name)
-                                .font(.headline)
-                                .lineLimit(1)
+        Button {
+            appModel.recall(presentation, mode: .context, destination: .originalDisplay)
+        } label: {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(statusColor.opacity(0.15))
+                    .frame(width: 32, height: 32)
+                    .overlay {
+                        Text(String(presentation.record.anchorWindow.appName.prefix(1)))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(statusColor)
+                    }
 
-                            if presentation.record.isFavorite {
-                                Image(systemName: "star.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(CuePaneChrome.amber)
-                            }
-                        }
-
-                        Text(presentation.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(presentation.record.name)
+                            .font(.subheadline.weight(.medium))
                             .lineLimit(1)
 
-                        if !presentation.record.previewContextAppNames.isEmpty {
-                            Text(presentation.record.previewContextAppNames.prefix(3).joined(separator: " · "))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                        if presentation.record.isFavorite {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(CuePaneChrome.amber)
                         }
                     }
 
-                    Spacer(minLength: 0)
-
-                    CuePaneStatusBadge(title: presentation.statusLabel, color: statusColor)
+                    Text("\(presentation.record.anchorWindow.appName) · \(presentation.record.totalWindowCount)개 창")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
-                Text("문맥 \(presentation.record.totalWindowCount)개 · 매칭 \(presentation.matchedCount)개 · 실행 \(presentation.record.usageCount)회 · \(presentation.record.updatedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                Spacer(minLength: 0)
 
-                HStack(spacing: 8) {
-                    actionButton("문맥 복원", systemImage: "square.stack.3d.up.fill") {
-                        appModel.recall(presentation, mode: .context, destination: .originalDisplay)
-                    }
-                    .tint(CuePaneChrome.accent)
+                CuePaneStatusBadge(title: presentation.statusLabel, color: statusColor)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isHovered ? Color.primary.opacity(0.04) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .contextMenu {
+            Button("문맥 복원") {
+                appModel.recall(presentation, mode: .context, destination: .originalDisplay)
+            }
 
-                    actionButton("창만", systemImage: "rectangle.on.rectangle") {
-                        appModel.recall(presentation, mode: .anchorOnly, destination: .originalDisplay)
-                    }
+            Button("창만 복원") {
+                appModel.recall(presentation, mode: .anchorOnly, destination: .originalDisplay)
+            }
 
-                    actionButton("여기로", systemImage: "arrow.down.right.and.arrow.up.left") {
-                        appModel.recall(presentation, mode: .context, destination: .currentDisplay)
-                    }
+            Button("현재 화면으로 복원") {
+                appModel.recall(presentation, mode: .context, destination: .currentDisplay)
+            }
 
-                    actionButton("업데이트", systemImage: "arrow.clockwise") {
-                        appModel.updateContext(for: presentation.record)
-                    }
+            Divider()
 
-                    Menu {
-                        Button("이름 수정") {
-                            appModel.beginRenaming(presentation.record)
-                        }
+            Button("문맥 업데이트") {
+                appModel.updateContext(for: presentation.record)
+            }
 
-                        Button(presentation.record.isFavorite ? "즐겨찾기 해제" : "즐겨찾기") {
-                            appModel.toggleFavorite(presentation.record)
-                        }
+            Button("이름 수정") {
+                appModel.beginRenaming(presentation.record)
+            }
 
-                        Button("삭제", role: .destructive) {
-                            appModel.delete(presentation.record)
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
+            Button(presentation.record.isFavorite ? "즐겨찾기 해제" : "즐겨찾기") {
+                appModel.toggleFavorite(presentation.record)
+            }
+
+            Divider()
+
+            Button("삭제", role: .destructive) {
+                appModel.delete(presentation.record)
             }
         }
     }
@@ -249,13 +218,5 @@ private struct AnchorRowView: View {
             return CuePaneChrome.amber
         }
         return CuePaneChrome.danger
-    }
-
-    private func actionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
     }
 }

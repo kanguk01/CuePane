@@ -9,7 +9,7 @@ final class WindowCoordinator {
         present(
             id: "search",
             title: "CuePane 검색",
-            size: NSSize(width: 900, height: 760),
+            size: NSSize(width: 780, height: 520),
             content: AnyView(SearchOverlayView().environmentObject(appModel))
         )
     }
@@ -22,7 +22,7 @@ final class WindowCoordinator {
         present(
             id: "naming",
             title: "윈도우 이름 붙이기",
-            size: NSSize(width: 580, height: 430),
+            size: NSSize(width: 560, height: 220),
             content: AnyView(NameWindowView().environmentObject(appModel))
         )
     }
@@ -55,10 +55,19 @@ final class WindowCoordinator {
         content: AnyView
     ) {
         let controller: NSWindowController
+        let sizedContent = AnyView(
+            content
+                .frame(width: size.width, height: size.height)
+        )
+        let hostingController = NSHostingController(rootView: sizedContent)
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = []
+        }
 
         if let existing = windows[id], let window = existing.window {
             window.title = title
-            window.contentViewController = NSHostingController(rootView: content)
+            window.contentViewController = hostingController
+            window.setContentSize(size)
             controller = existing
         } else {
             let window = NSWindow(
@@ -70,8 +79,7 @@ final class WindowCoordinator {
             window.title = title
             window.identifier = NSUserInterfaceItemIdentifier(id)
             window.isReleasedWhenClosed = false
-            window.center()
-            window.contentViewController = NSHostingController(rootView: content)
+            window.contentViewController = hostingController
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
@@ -83,6 +91,7 @@ final class WindowCoordinator {
             window.toolbarStyle = .unifiedCompact
             window.animationBehavior = .utilityWindow
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            window.center()
             controller = NSWindowController(window: window)
             windows[id] = controller
         }

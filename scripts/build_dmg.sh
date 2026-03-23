@@ -26,6 +26,8 @@ swift build -c release --package-path "$REPO_ROOT"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 cp "$REPO_ROOT/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+cp "$REPO_ROOT/Resources/cuepane-focus-helper" "$MACOS_DIR/cuepane-focus-helper"
+chmod +x "$MACOS_DIR/cuepane-focus-helper"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

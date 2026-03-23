@@ -478,12 +478,42 @@ final class AppModel: ObservableObject {
         }
 
         let topology = DisplayTopology.current()
+
+        // 진단: 복원 시도 시 전체 창 목록 덤프
+        let allWindows = windowCatalog.fetchWindows(topology: topology, excludedBundleIDs: preferences.excludedBundleIDSet)
+        var diagLines = ["recall '\(record.name)' mode=\(mode) dest=\(destination)"]
+        diagLines.append("saved anchor: \(record.anchorWindow.appName) · \(record.anchorWindow.title) · display=\(record.anchorWindow.displayID)")
+        diagLines.append("saved context: \(record.contextWindows.map { "\($0.appName)·\($0.title)" }.joined(separator: ", "))")
+        diagLines.append("live windows (\(allWindows.count)):")
+        for w in allWindows.prefix(20) {
+            diagLines.append("  \(w.appName) · \(w.title) · display=\(w.displayID) · \(Int(w.frame.origin.x)),\(Int(w.frame.origin.y)) \(Int(w.frame.width))x\(Int(w.frame.height))")
+        }
+        writeDiag(diagLines.joined(separator: "\n"))
+
         let result = recallCoordinator.recall(
             record: record,
             request: RecallRequest(mode: mode, destination: destination),
             topology: topology,
             excludedBundleIDs: preferences.excludedBundleIDSet
         )
+        writeDiag("recall result: matched=\(result.matchedCount) raised=\(result.raisedCount) unresolved=\(result.unresolvedTitles)")
+
+        if result.spaceSwitched, let cgID = result.crossSpaceCGWindowID {
+            if let index = anchors.firstIndex(where: { $0.id == record.id }) {
+                var updatedAnchors = anchors
+                updatedAnchors[index].lastUsedAt = Date()
+                updatedAnchors[index].usageCount += 1
+                _ = commitAnchors(updatedAnchors)
+            }
+            lastActionSummary = "\(record.name) · 다른 데스크톱으로 전환"
+            dismissSearch()
+
+            let catalog = windowCatalog
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                _ = catalog.switchToSpaceOfWindow(cgWindowID: CGWindowID(cgID))
+            }
+            return
+        }
 
         if result.raisedCount > 0, let index = anchors.firstIndex(where: { $0.id == record.id }) {
             var updatedAnchors = anchors
