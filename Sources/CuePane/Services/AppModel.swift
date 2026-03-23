@@ -446,7 +446,7 @@ final class AppModel: ObservableObject {
             dismissSearch()
             dismissNamingAction?()
 
-            let catalog = windowCatalog
+            nonisolated(unsafe) let catalog = windowCatalog
             let targetPID = pid
             let targetTitle = title
             let targetNormTitle = normalizedTitle
@@ -730,10 +730,6 @@ final class AppModel: ObservableObject {
         }
 
         return (AnchorRecordUtilities.sort(mergedRecords), mergedCount)
-    }
-
-    private func sortedAnchors(_ records: [AnchorRecord]) -> [AnchorRecord] {
-        AnchorRecordUtilities.sort(records)
     }
 
     private func sortedPresentations(_ presentations: [AnchorPresentation]) -> [AnchorPresentation] {

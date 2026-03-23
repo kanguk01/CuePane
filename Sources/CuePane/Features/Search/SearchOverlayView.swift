@@ -148,15 +148,6 @@ struct SearchOverlayView: View {
         }
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
 }
 
 // 방향키 + Enter를 처리하는 NSTextField 래퍼
