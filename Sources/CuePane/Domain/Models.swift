@@ -186,7 +186,6 @@ struct WindowSnapshot: Codable, Hashable, Identifiable {
     let captureOrder: Int
     let isFocused: Bool
     let capturedAt: Date
-    var cgWindowID: UInt32?
 }
 
 struct AnchorRecord: Codable, Hashable, Identifiable {

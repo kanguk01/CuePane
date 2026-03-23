@@ -2,39 +2,6 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-@_silgen_name("_AXUIElementGetWindow")
-func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
-
-@_silgen_name("CGSDefaultConnectionForThread")
-func CGSDefaultConnectionForThread() -> Int32
-
-@_silgen_name("CGSGetActiveSpace")
-func CGSGetActiveSpace(_ cid: Int32) -> Int32
-
-@_silgen_name("CGSCopySpacesForWindows")
-func CGSCopySpacesForWindows(_ cid: Int32, _ mask: Int32, _ windowIDs: CFArray) -> CFArray?
-
-@_silgen_name("CGSCopyManagedDisplaySpaces")
-func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> CFArray?
-
-// AltTab 방식: 특정 CGWindowID를 지정하여 프로세스를 front로 전환
-// macOS가 자동으로 해당 창이 있는 Space로 전환 애니메이션 수행
-@_silgen_name("_SLPSSetFrontProcessWithOptions") @discardableResult
-func _SLPSSetFrontProcessWithOptions(
-    _ psn: UnsafeMutablePointer<ProcessSerialNumber>,
-    _ wid: CGWindowID,
-    _ mode: UInt32
-) -> CGError
-
-@_silgen_name("SLPSPostEventRecordTo") @discardableResult
-func SLPSPostEventRecordTo(
-    _ psn: UnsafeMutablePointer<ProcessSerialNumber>,
-    _ bytes: UnsafeMutablePointer<UInt8>
-) -> CGError
-
-@_silgen_name("GetProcessForPID")
-func GetProcessForPID(_ pid: pid_t, _ psn: UnsafeMutablePointer<ProcessSerialNumber>)
-
 struct LiveWindow {
     let appName: String
     let bundleIdentifier: String
@@ -51,7 +18,6 @@ struct LiveWindow {
     let isFocused: Bool
     let application: NSRunningApplication
     let element: AXUIElement
-    var cgWindowID: CGWindowID?
 }
 
 enum WindowInventoryScope {
@@ -124,11 +90,7 @@ final class WindowCatalogService {
                         windowOrder: index,
                         isFocused: isFocused,
                         application: application,
-                        element: windowElement,
-                        cgWindowID: {
-                            var wid: CGWindowID = 0
-                            return _AXUIElementGetWindow(windowElement, &wid) == .success ? wid : nil
-                        }()
+                        element: windowElement
                     )
                 }
             }
@@ -253,10 +215,13 @@ final class WindowCatalogService {
     }
 
     func raise(window: LiveWindow) -> Bool {
-        _ = window.application.activate()
+        // AXRaise를 먼저 수행해야 macOS가 해당 창의 Space로 전환합니다.
+        // activate를 먼저 하면 현재 Space의 같은 앱 창이 올라옵니다.
         let raiseResult = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
         _ = set(bool: true, attribute: kAXMainAttribute as CFString, for: window.element)
         _ = set(bool: true, attribute: kAXFocusedAttribute as CFString, for: window.element)
+        _ = window.application.activate()
+
         return raiseResult == .success
     }
 
@@ -576,9 +541,6 @@ final class WindowCatalogService {
                 ?? boolAttribute(kAXFocusedAttribute as CFString, from: windowElement)
                 ?? false
 
-            var cgWinID: CGWindowID = 0
-            let hasCGID = _AXUIElementGetWindow(windowElement, &cgWinID) == .success
-
             return LiveWindow(
                 appName: application.localizedName ?? bundleIdentifier,
                 bundleIdentifier: bundleIdentifier,
@@ -594,8 +556,7 @@ final class WindowCatalogService {
                 windowOrder: index,
                 isFocused: isFocused,
                 application: application,
-                element: windowElement,
-                cgWindowID: hasCGID ? cgWinID : nil
+                element: windowElement
             )
         }
     }
@@ -618,45 +579,6 @@ final class WindowCatalogService {
         }
 
         return scoredDisplays.max(by: { lhs, rhs in lhs.1 < rhs.1 })?.0.id ?? topology.fallbackDisplay?.id
-    }
-
-    /// AX 창의 PID/title/frame으로 CGWindowList에서 매칭하여 CGWindowID를 반환합니다.
-    func cgWindowID(for window: LiveWindow) -> CGWindowID? {
-        guard let list = CGWindowListCopyWindowInfo([.excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-        let pid = window.application.processIdentifier
-        var bestID: CGWindowID?
-        var bestScore = 0
-
-        for entry in list {
-            guard
-                let entryPID = entry[kCGWindowOwnerPID as String] as? pid_t ?? (entry[kCGWindowOwnerPID as String] as? Int).map(pid_t.init),
-                entryPID == pid,
-                let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
-                let boundsDictionary = entry[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
-                let windowNumber = entry[kCGWindowNumber as String] as? Int
-            else { continue }
-
-            var score = 0
-            let frameDelta = abs(bounds.origin.x - window.frame.origin.x) +
-                             abs(bounds.origin.y - window.frame.origin.y) +
-                             abs(bounds.width - window.frame.width) +
-                             abs(bounds.height - window.frame.height)
-            if frameDelta < 20 { score += 50 }
-            else if frameDelta < 80 { score += 30 }
-
-            let title = entry[kCGWindowName as String] as? String ?? ""
-            if !title.isEmpty && title == window.title { score += 40 }
-
-            if score > bestScore {
-                bestScore = score
-                bestID = CGWindowID(windowNumber)
-            }
-        }
-
-        return bestScore >= 50 ? bestID : nil
     }
 
     struct CrossSpaceWindow {
@@ -721,118 +643,44 @@ final class WindowCatalogService {
         }
     }
 
-    /// 특정 CGWindowID가 있는 Space로 전환합니다.
-    /// macOS private API (CGSManagedDisplaySetCurrentSpace) 사용 — yabai/AltTab과 동일.
-    /// NSAppleScript로 System Events를 통해 Ctrl+Arrow를 시뮬레이션하여 Space 전환합니다.
-    func switchToSpaceOfWindow(cgWindowID: CGWindowID) -> Bool {
-        let cid = CGSDefaultConnectionForThread()
-        let currentSpace = CGSGetActiveSpace(cid)
-
-        let widArray = [cgWindowID] as CFArray
-        guard let targetSpaces = CGSCopySpacesForWindows(cid, 0x7, widArray) as? [Int32],
-              let targetSpace = targetSpaces.first, targetSpace > 0 else {
-            diagWrite("switchToSpace: window \(cgWindowID) not found")
+    /// 다른 Space에 있는 앱의 특정 창으로 전환합니다.
+    func switchToWindowOnOtherSpace(pid: pid_t, savedTitle: String, savedNormalizedTitle: String) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              let appName = app.localizedName else {
             return false
         }
 
-        if targetSpace == currentSpace {
-            diagWrite("switchToSpace: already on target space")
-            return true
-        }
-
-        guard let spacesInfo = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] else {
-            return false
-        }
-
-        var orderedSpaceIDs: [Int32] = []
-        for displayInfo in spacesInfo {
-            if let spaces = displayInfo["Spaces"] as? [[String: Any]] {
-                for space in spaces {
-                    if let spaceID = space["id64"] as? Int {
-                        orderedSpaceIDs.append(Int32(spaceID))
-                    }
-                }
-            }
-        }
-
-        guard let currentIndex = orderedSpaceIDs.firstIndex(of: currentSpace),
-              let targetIndex = orderedSpaceIDs.firstIndex(of: targetSpace) else {
-            diagWrite("switchToSpace: index not found")
-            return false
-        }
-
-        let diff = targetIndex - currentIndex
-        let steps = abs(diff)
-        // 123 = Left Arrow, 124 = Right Arrow
-        let arrowCode = diff > 0 ? 124 : 123
-
-        diagWrite("switchToSpace: steps=\(steps) direction=\(diff > 0 ? "right" : "left")")
-
-        // NSAppleScript로 System Events에 키 이벤트 전송
-        for i in 0..<steps {
-            let script = NSAppleScript(source: "tell application \"System Events\" to key code \(arrowCode) using control down")
-            script?.executeAndReturnError(nil)
-            if i < steps - 1 {
-                Thread.sleep(forTimeInterval: 0.5)
-            }
-        }
-
-        return true
-    }
-
-    private func diagWrite(_ message: String) {
-        let line = "\(message)\n"
-        let path = "/tmp/cuepane_diag.txt"
-        if let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8) ?? Data())
-            handle.closeFile()
-        } else {
-            FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
-        }
-    }
-
-    /// 현재 Space의 해당 앱 창을 일시 최소화합니다 (Space 전환 전 호출).
-    func minimizeCurrentSpaceWindows(pid: pid_t) -> [AXUIElement] {
+        // 1. 현재 Space의 해당 앱 창을 일시 최소화 (같은 앱 창이 있으면 Space 전환 안 됨)
         let appElement = AXUIElementCreateApplication(pid)
         let currentWindows = arrayAttribute(kAXWindowsAttribute as CFString, from: appElement)
-        var minimized: [AXUIElement] = []
+        var minimizedElements: [AXUIElement] = []
         for windowElement in currentWindows {
             guard
                 let role = stringAttribute(kAXRoleAttribute as CFString, from: windowElement),
                 role == kAXWindowRole as String
             else { continue }
-            let isMin = boolAttribute(kAXMinimizedAttribute as CFString, from: windowElement) ?? false
-            if !isMin {
+            let isMinimized = boolAttribute(kAXMinimizedAttribute as CFString, from: windowElement) ?? false
+            if !isMinimized {
                 _ = set(bool: true, attribute: kAXMinimizedAttribute as CFString, for: windowElement)
-                minimized.append(windowElement)
+                minimizedElements.append(windowElement)
             }
         }
-        return minimized
-    }
 
-    /// CGWindowID로 정확한 창을 찾아 raise합니다.
-    func raiseWindowByCGWindowID(pid: pid_t, cgWindowID: CGWindowID) -> Bool {
-        let appElement = AXUIElementCreateApplication(pid)
-        let windows = arrayAttribute(kAXWindowsAttribute as CFString, from: appElement)
+        // 2. AppleScript activate (NSRunningApplication.activate보다 Space 전환이 확실)
+        let escapedName = appName.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = NSAppleScript(source: "tell application \"\(escapedName)\" to activate")
+        script?.executeAndReturnError(nil)
 
-        for windowElement in windows {
-            var wid: CGWindowID = 0
-            if _AXUIElementGetWindow(windowElement, &wid) == .success, wid == cgWindowID {
-                let raiseResult = AXUIElementPerformAction(windowElement, kAXRaiseAction as CFString)
-                _ = set(bool: true, attribute: kAXMainAttribute as CFString, for: windowElement)
-                _ = set(bool: true, attribute: kAXFocusedAttribute as CFString, for: windowElement)
-                return raiseResult == .success
-            }
-        }
-        return false
-    }
+        // 3. 전환 대기 후 타겟 창 raise
+        Thread.sleep(forTimeInterval: 0.5)
+        let raised = raiseWindowByTitle(pid: pid, savedTitle: savedTitle, savedNormalizedTitle: savedNormalizedTitle)
 
-    /// 이전에 최소화한 창을 복원합니다.
-    func restoreMinimizedWindows(_ elements: [AXUIElement]) {
-        for element in elements {
+        // 4. 최소화했던 창 복원
+        for element in minimizedElements {
             _ = set(bool: false, attribute: kAXMinimizedAttribute as CFString, for: element)
         }
+
+        return raised
     }
 
     /// Space 전환 후 AX로 특정 창을 찾아 올립니다.

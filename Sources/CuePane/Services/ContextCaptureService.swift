@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 final class ContextCaptureService {
@@ -53,11 +52,10 @@ final class ContextCaptureService {
             return nil
         }
 
-        let cgID = window.cgWindowID ?? windowCatalog.cgWindowID(for: window)
-        return makeSnapshot(from: window, display: display, captureOrder: window.windowOrder, cgWindowID: cgID)
+        return makeSnapshot(from: window, display: display, captureOrder: window.windowOrder)
     }
 
-    private func makeSnapshot(from window: LiveWindow, display: DisplayDescriptor, captureOrder: Int, cgWindowID: CGWindowID? = nil) -> WindowSnapshot {
+    private func makeSnapshot(from window: LiveWindow, display: DisplayDescriptor, captureOrder: Int) -> WindowSnapshot {
         WindowSnapshot(
             id: UUID(),
             bundleIdentifier: window.bundleIdentifier,
@@ -74,8 +72,7 @@ final class ContextCaptureService {
             normalizedFrame: NormalizedRect(globalFrame: window.frame, displayFrame: display.visibleFrame.cgRect),
             captureOrder: captureOrder,
             isFocused: window.isFocused,
-            capturedAt: Date(),
-            cgWindowID: cgWindowID
+            capturedAt: Date()
         )
     }
 }

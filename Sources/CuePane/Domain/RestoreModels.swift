@@ -56,7 +56,6 @@ struct RecallResult: Hashable {
     let raiseFailedTitles: [String]
     var spaceSwitched: Bool = false
     var crossSpacePID: pid_t?
-    var crossSpaceCGWindowID: UInt32?
     var crossSpaceTitle: String?
     var crossSpaceNormalizedTitle: String?
 

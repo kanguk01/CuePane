@@ -498,7 +498,10 @@ final class AppModel: ObservableObject {
         )
         writeDiag("recall result: matched=\(result.matchedCount) raised=\(result.raisedCount) unresolved=\(result.unresolvedTitles)")
 
-        if result.spaceSwitched, let cgID = result.crossSpaceCGWindowID {
+        if result.spaceSwitched,
+           let pid = result.crossSpacePID,
+           let title = result.crossSpaceTitle,
+           let normalizedTitle = result.crossSpaceNormalizedTitle {
             if let index = anchors.firstIndex(where: { $0.id == record.id }) {
                 var updatedAnchors = anchors
                 updatedAnchors[index].lastUsedAt = Date()
@@ -506,11 +509,21 @@ final class AppModel: ObservableObject {
                 _ = commitAnchors(updatedAnchors)
             }
             lastActionSummary = "\(record.name) · 다른 데스크톱으로 전환"
+
+            // CuePane 창을 닫고 백그라운드에서 Space 전환 수행
             dismissSearch()
+            dismissNamingAction?()
 
             let catalog = windowCatalog
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                _ = catalog.switchToSpaceOfWindow(cgWindowID: CGWindowID(cgID))
+            let targetPID = pid
+            let targetTitle = title
+            let targetNormTitle = normalizedTitle
+            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.15) {
+                _ = catalog.switchToWindowOnOtherSpace(
+                    pid: targetPID,
+                    savedTitle: targetTitle,
+                    savedNormalizedTitle: targetNormTitle
+                )
             }
             return
         }

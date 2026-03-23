@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 final class RecallCoordinator {
@@ -73,18 +72,14 @@ final class RecallCoordinator {
     ) -> RecallResult {
         let snapshots = orderedSnapshots(for: record, mode: request.mode)
 
-        // Phase 1: 현재 Space에서 매칭 시도
+        // Phase 1: 현재 Space에서 타이틀이 일치하는 매칭 시도
+        // 같은 앱의 다른 창이 매칭되는 것을 방지하기 위해 타이틀 유사성 필수
         let liveWindows = windowCatalog.fetchWindowsIncludingHidden(topology: topology, excludedBundleIDs: excludedBundleIDs)
         let anchorMatch = bestMatch(for: record.anchorWindow, windows: liveWindows)
+        let titleMatched = anchorMatch.map { hasTitleSimilarity(snapshot: record.anchorWindow, window: $0.window) } ?? false
 
-        diagLog("Phase1: anchor=\(record.anchorWindow.appName)|\(record.anchorWindow.title.prefix(30)) cgID=\(record.anchorWindow.cgWindowID.map(String.init) ?? "nil") match=\(anchorMatch.map { "\($0.window.appName)|\($0.window.title.prefix(30)) cgID=\($0.window.cgWindowID.map(String.init) ?? "nil") score=\($0.score)" } ?? "nil")")
-
-        if let anchorMatch {
-            let titleOK = hasTitleSimilarity(snapshot: record.anchorWindow, window: anchorMatch.window)
-            diagLog("Phase1: titleSimilarity=\(titleOK)")
-            if titleOK {
-                return performRecall(record: record, request: request, topology: topology, excludedBundleIDs: excludedBundleIDs)
-            }
+        if anchorMatch != nil && titleMatched {
+            return performRecall(record: record, request: request, topology: topology, excludedBundleIDs: excludedBundleIDs)
         }
 
         // Phase 2: 앵커 창이 다른 Space에 있는지 CGWindowList로 확인
@@ -92,18 +87,9 @@ final class RecallCoordinator {
         let anchorSnapshot = record.anchorWindow
         let systemWindows = windowCatalog.allSystemWindows(excludedBundleIDs: excludedBundleIDs)
 
-        // CGWindowID로 정확 매칭 우선, 없으면 bundleIdentifier로 매칭
-        let crossSpaceMatch: WindowCatalogService.CrossSpaceWindow?
-        if let savedCGID = anchorSnapshot.cgWindowID {
-            crossSpaceMatch = systemWindows.first { cw in
-                !cw.isOnScreen && UInt32(cw.windowNumber) == savedCGID
-            } ?? systemWindows.first { cw in
-                !cw.isOnScreen && cw.bundleIdentifier == anchorSnapshot.bundleIdentifier
-            }
-        } else {
-            crossSpaceMatch = systemWindows.first { cw in
-                !cw.isOnScreen && cw.bundleIdentifier == anchorSnapshot.bundleIdentifier
-            }
+        let crossSpaceMatch = systemWindows.first { cw in
+            !cw.isOnScreen &&
+            cw.bundleIdentifier == anchorSnapshot.bundleIdentifier
         }
 
         if let match = crossSpaceMatch {
@@ -123,7 +109,6 @@ final class RecallCoordinator {
                 raiseFailedTitles: [],
                 spaceSwitched: true,
                 crossSpacePID: match.ownerPID,
-                crossSpaceCGWindowID: UInt32(match.windowNumber),
                 crossSpaceTitle: anchorSnapshot.title,
                 crossSpaceNormalizedTitle: anchorSnapshot.normalizedTitle
             )
@@ -148,18 +133,6 @@ final class RecallCoordinator {
         }
 
         return count
-    }
-
-    private func diagLog(_ message: String) {
-        let line = "\(message)\n"
-        let path = "/tmp/cuepane_diag.txt"
-        if let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8) ?? Data())
-            handle.closeFile()
-        } else {
-            FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
-        }
     }
 
     private func hasTitleSimilarity(snapshot: WindowSnapshot, window: LiveWindow) -> Bool {
@@ -268,21 +241,7 @@ final class RecallCoordinator {
     }
 
     private func bestMatch(for snapshot: WindowSnapshot, windows: [LiveWindow]) -> (index: Int, window: LiveWindow, score: Int)? {
-        // CGWindowID 정확 매칭 (같은 세션 내에서 100% 정확)
-        if let savedID = snapshot.cgWindowID {
-            let cgID = CGWindowID(savedID)
-            if let exactMatch = windows.enumerated().first(where: { _, w in
-                w.cgWindowID == cgID
-            }) {
-                return (exactMatch.offset, exactMatch.element, 200)
-            }
-            // CGWindowID가 저장되어 있는데 매칭 안 됨 → 다른 Space에 있음
-            // 같은 앱의 다른 창으로 잘못 매칭되는 것을 방지하기 위해 nil 반환
-            return nil
-        }
-
-        // CGWindowID 없음 (앱 재시작 후 등) → fuzzy 매칭
-        return windows.enumerated()
+        windows.enumerated()
             .compactMap { index, window -> (Int, LiveWindow, Int)? in
                 guard window.bundleIdentifier == snapshot.bundleIdentifier else {
                     return nil
@@ -305,60 +264,40 @@ final class RecallCoordinator {
             score += 8
         }
 
-        // 1. Full title 정확 일치 (같은 앱의 여러 창 구별에 핵심)
-        if !snapshot.title.isEmpty && snapshot.title == window.title {
-            score += 50
-        } else if !snapshot.title.isEmpty && !window.title.isEmpty {
-            let savedLower = snapshot.title.lowercased()
-            let liveLower = window.title.lowercased()
-            if savedLower == liveLower {
-                score += 45
-            } else if savedLower.contains(liveLower) || liveLower.contains(savedLower) {
-                score += 30
-            } else if !snapshot.normalizedTitle.isEmpty && snapshot.normalizedTitle == window.normalizedTitle {
-                score += 24
-            } else if !snapshot.normalizedTitle.isEmpty, window.normalizedTitle.contains(snapshot.normalizedTitle) {
-                score += 16
-            } else {
-                score += tokenOverlapScore(lhs: snapshot.titleTokens, rhs: window.titleTokens)
-            }
-        } else if !snapshot.normalizedTitle.isEmpty && snapshot.normalizedTitle == window.normalizedTitle {
-            score += 24
+        if !snapshot.normalizedTitle.isEmpty && snapshot.normalizedTitle == window.normalizedTitle {
+            score += 34
+        } else if !snapshot.normalizedTitle.isEmpty, window.normalizedTitle.contains(snapshot.normalizedTitle) {
+            score += 22
+        } else {
+            score += tokenOverlapScore(lhs: snapshot.titleTokens, rhs: window.titleTokens)
         }
 
         if snapshot.role == window.role {
-            score += 6
+            score += 8
         }
 
         if !snapshot.subrole.isEmpty && snapshot.subrole == window.subrole {
-            score += 4
+            score += 5
         }
 
-        // 2. 위치/크기 가중치 강화 (같은 앱 여러 창에서 정확한 창 특정에 중요)
         let widthDelta = abs(snapshot.frame.width - window.frame.width)
         let heightDelta = abs(snapshot.frame.height - window.frame.height)
-        if widthDelta + heightDelta < 60 {
-            score += 18
-        } else if widthDelta + heightDelta < 160 {
-            score += 10
-        } else if widthDelta + heightDelta < 300 {
-            score += 4
+        if widthDelta + heightDelta < 160 {
+            score += 8
         }
 
         let centerDistance = hypot(
             snapshot.centerPoint.x - window.centerPoint.x,
             snapshot.centerPoint.y - window.centerPoint.y
         )
-        if centerDistance < 100 {
-            score += 18
-        } else if centerDistance < 250 {
-            score += 8
-        } else if centerDistance < 400 {
-            score += 3
+        if centerDistance < 180 {
+            score += 10
+        } else if centerDistance < 360 {
+            score += 4
         }
 
         if snapshot.isFocused && window.isFocused {
-            score += 6
+            score += 8
         }
 
         return score
