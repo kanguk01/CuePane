@@ -14,7 +14,7 @@ Cross-Space Recall · CGWindowID Matching · Raycast-style Search · Dark Mode
 
 <br>
 
-[<img src="https://img.shields.io/badge/Download-v0.2.0-28A745?style=for-the-badge&logo=apple&logoColor=white" alt="Download">](https://github.com/kanguk01/CuePane/releases/latest)
+[<img src="https://img.shields.io/badge/Download-v0.2.1-28A745?style=for-the-badge&logo=apple&logoColor=white" alt="Download">](https://github.com/kanguk01/CuePane/releases/latest)
 
 </div>
 

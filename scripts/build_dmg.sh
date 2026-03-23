@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="CuePane"
-VERSION="${CUEPANE_VERSION:-0.2.0}"
+VERSION="${CUEPANE_VERSION:-0.2.1}"
 DIST_DIR="$REPO_ROOT/dist"
 STAGE_DIR="$REPO_ROOT/.build/dmg-stage"
 APP_DIR="$STAGE_DIR/$APP_NAME.app"
