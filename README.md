@@ -47,13 +47,11 @@ CuePane은 여기에 집중합니다.
 
 > **요구 사항** -- macOS 14.0 (Sonoma) 이상
 
-### Build From Source
+### Homebrew
 
 ```bash
-git clone https://github.com/kanguk01/CuePane.git
-cd CuePane
-swift build
-swift run CuePane
+brew tap kanguk01/cuepane
+brew install --cask cuepane
 ```
 
 ## Features
