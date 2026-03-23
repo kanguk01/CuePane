@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>CuePane</title>
+        <link>https://kanguk01.github.io/CuePane/appcast.xml</link>
+        <description>CuePane 업데이트</description>
+        <language>ko</language>
+        <item>
+            <title>v0.2.0</title>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <description>Cross-Space 복원, CGWindowID 매칭, 프로덕션 고도화</description>
+            <enclosure url="https://github.com/kanguk01/CuePane/releases/download/v0.2.0/CuePane.dmg"
+                       sparkle:edSignature=""
+                       length="0"
+                       type="application/octet-stream"/>
+        </item>
+    </channel>
+</rss>

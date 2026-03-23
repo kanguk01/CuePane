@@ -1,7 +1,13 @@
+import Sparkle
 import SwiftUI
 
 struct MenuBarContentView: View {
     @EnvironmentObject private var appModel: AppModel
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+    }
 
     var body: some View {
         ScrollView {
@@ -153,6 +159,9 @@ struct MenuBarContentView: View {
                 .buttonStyle(.bordered).controlSize(.small)
             Button("가져오기") { appModel.importAnchors() }
                 .buttonStyle(.bordered).controlSize(.small)
+
+            CheckForUpdatesView(updater: updater)
+                .controlSize(.small)
 
             SettingsLink {
                 Label("설정", systemImage: "gearshape")

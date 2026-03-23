@@ -1,8 +1,14 @@
 import ServiceManagement
+import Sparkle
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -52,6 +58,8 @@ struct SettingsView: View {
                         Text("30일 후").tag(30)
                         Text("90일 후").tag(90)
                     }
+
+                    CheckForUpdatesView(updater: updater)
                 }
 
                 Section("제외 앱") {

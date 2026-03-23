@@ -9,7 +9,7 @@ struct CuePaneApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContentView()
+            MenuBarContentView(updater: appDelegate.updaterController.updater)
                 .environmentObject(appModel)
                 .onAppear { bootstrapIfNeeded() }
         } label: {
@@ -24,7 +24,7 @@ struct CuePaneApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView()
+            SettingsView(updater: appDelegate.updaterController.updater)
                 .environmentObject(appModel)
         }
     }

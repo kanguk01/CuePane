@@ -13,9 +13,15 @@ let package = Package(
             targets: ["CuePane"]
         ),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.0.0"),
+    ],
     targets: [
         .executableTarget(
-            name: "CuePane"
+            name: "CuePane",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
         ),
     ]
 )
