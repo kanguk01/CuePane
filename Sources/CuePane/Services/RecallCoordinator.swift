@@ -16,9 +16,12 @@ final class RecallCoordinator {
 
         if !anchorLive {
             let systemWindows = windowCatalog.allSystemWindows(excludedBundleIDs: excludedBundleIDs)
-            let crossSpaceHit = systemWindows.contains { cw in
-                !cw.isOnScreen &&
-                cw.bundleIdentifier == record.anchorWindow.bundleIdentifier
+            let savedWID = record.anchorWindow.windowNumber
+            let crossSpaceHit: Bool
+            if let savedWID, savedWID != 0 {
+                crossSpaceHit = systemWindows.contains { !$0.isOnScreen && Int($0.windowNumber) == savedWID }
+            } else {
+                crossSpaceHit = systemWindows.contains { !$0.isOnScreen && $0.bundleIdentifier == record.anchorWindow.bundleIdentifier }
             }
             if crossSpaceHit {
                 anchorLive = true
@@ -87,9 +90,16 @@ final class RecallCoordinator {
         let anchorSnapshot = record.anchorWindow
         let systemWindows = windowCatalog.allSystemWindows(excludedBundleIDs: excludedBundleIDs)
 
-        let crossSpaceMatch = systemWindows.first { cw in
-            !cw.isOnScreen &&
-            cw.bundleIdentifier == anchorSnapshot.bundleIdentifier
+        // 저장된 CGWindowID로 정확한 창 매칭 (같은 앱의 다른 탭 방지)
+        let crossSpaceMatch: WindowCatalogService.CrossSpaceWindow?
+        if let savedWID = anchorSnapshot.windowNumber, savedWID != 0 {
+            crossSpaceMatch = systemWindows.first { cw in
+                !cw.isOnScreen && Int(cw.windowNumber) == savedWID
+            }
+        } else {
+            crossSpaceMatch = systemWindows.first { cw in
+                !cw.isOnScreen && cw.bundleIdentifier == anchorSnapshot.bundleIdentifier
+            }
         }
 
         if let match = crossSpaceMatch {
