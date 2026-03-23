@@ -247,10 +247,14 @@ final class AppModel: ObservableObject {
         let preferredWindowElement = pendingHotKeyWindowElement
         pendingHotKeyFocusedPID = nil
         pendingHotKeyWindowElement = nil
-        updateExternalNamingCache(preferredProcessIdentifier: preferredProcessIdentifier, preferredWindowElement: preferredWindowElement)
-        refreshCatalogSnapshot()
+
         searchQuery = ""
         showSearchAction?()
+
+        Task { @MainActor in
+            updateExternalNamingCache(preferredProcessIdentifier: preferredProcessIdentifier, preferredWindowElement: preferredWindowElement)
+            refreshCatalogSnapshot()
+        }
     }
 
     func dismissSearch() {
