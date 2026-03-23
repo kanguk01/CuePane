@@ -9,7 +9,7 @@ final class WindowCoordinator {
         present(
             id: "search",
             title: "CuePane 검색",
-            size: NSSize(width: 780, height: 520),
+            size: NSSize(width: 520, height: 480),
             content: AnyView(SearchOverlayView().environmentObject(appModel))
         )
     }
