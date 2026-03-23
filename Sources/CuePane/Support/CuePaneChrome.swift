@@ -2,9 +2,23 @@ import AppKit
 import SwiftUI
 
 enum CuePaneChrome {
-    static let mint = Color(red: 0.18, green: 0.65, blue: 0.53)
-    static let amber = Color(red: 0.85, green: 0.55, blue: 0.20)
-    static let danger = Color(red: 0.78, green: 0.32, blue: 0.28)
+    static let mint = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.24, green: 0.78, blue: 0.64, alpha: 1)
+            : NSColor(red: 0.18, green: 0.65, blue: 0.53, alpha: 1)
+    })
+
+    static let amber = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.95, green: 0.68, blue: 0.30, alpha: 1)
+            : NSColor(red: 0.85, green: 0.55, blue: 0.20, alpha: 1)
+    })
+
+    static let danger = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+            ? NSColor(red: 0.92, green: 0.42, blue: 0.38, alpha: 1)
+            : NSColor(red: 0.78, green: 0.32, blue: 0.28, alpha: 1)
+    })
 }
 
 struct CuePaneWindowBackground: View {
