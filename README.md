@@ -6,7 +6,7 @@
 
 **Name a window. Recall the whole context.**
 
-Cross-Space Recall · CGWindowID Matching · Raycast-style Search · Dark Mode
+멀티 데스크톱 · 정확한 창 복원 · 빠른 검색 · 다크 모드
 
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![macOS 14+](https://img.shields.io/badge/macOS-14.0+-000000?logo=apple&logoColor=white)](https://developer.apple.com/macos/)
@@ -22,20 +22,18 @@ Cross-Space Recall · CGWindowID Matching · Raycast-style Search · Dark Mode
 
 ## Why CuePane?
 
-macOS에서 앱 전환은 쉬워도, **정확한 작업 문맥 복귀**는 의외로 자주 깨집니다.
+macOS에서 앱 전환은 쉬워도, **아까 보던 그 화면**으로 돌아가는 건 생각보다 번거롭습니다.
 
-- 같은 앱 창이 여러 개라서 원하는 창만 바로 못 찾음
-- 멀티모니터에서 같이 보던 창 조합이 한 번에 안 돌아옴
-- 다른 데스크톱(Space)에 있는 작업 환경으로 바로 못 돌아감
-- Stage Manager나 일반 창 전환에서 작업 흐름이 자꾸 끊김
+- 같은 앱에 창이 여러 개라서 원하는 창을 바로 못 찾음
+- 함께 보던 창 조합이 한 번에 안 돌아옴
+- 다른 데스크톱에 두고 온 작업 환경으로 바로 못 돌아감
 
-CuePane은 여기에 집중합니다.
+CuePane은 **창에 이름을 붙이고, 나중에 이름만으로 그 작업 환경을 통째로 다시 불러오는** 맥 유틸리티입니다.
 
-- **앵커 저장** -- 현재 창에 `서버로그`, `PR 482`, `회의 참고자료` 같은 이름을 붙임
-- **문맥 캡처** -- 저장 시점에 같은 모니터에 함께 보이던 창들을 같이 기억
-- **빠른 복원** -- 검색창에서 이름만 치면 창 하나 또는 작업 문맥 전체를 다시 호출
-- **Cross-Space 복원** -- 다른 데스크톱에 있는 창도 감지하고, 자동으로 Space 전환 후 정확한 탭을 올림
-- **CGWindowID 매칭** -- 같은 앱의 다른 탭이 아닌, 저장한 바로 그 창을 정확하게 식별
+- **이름 붙이기** -- 현재 창에 `서버로그`, `PR 482` 같은 이름을 붙이면 주변 창들도 함께 저장
+- **즉시 복원** -- 검색창에서 이름만 치면 창 하나 또는 작업 문맥 전체를 다시 호출
+- **데스크톱 자동 전환** -- 다른 데스크톱에 있는 창도 감지하고, 해당 데스크톱으로 바로 이동
+- **정확한 창 식별** -- 같은 앱의 다른 탭이 아닌, 저장한 바로 그 창을 복원
 
 ## Install
 
@@ -70,13 +68,9 @@ brew install --cask cuepane
 
 나중에 `서버로그`를 검색하면 위 문맥을 한 번에 다시 호출합니다.
 
-### Cross-Space Recall
+### 다른 데스크톱 복원
 
-다른 데스크톱(Space)에 있는 창도 자동으로 감지합니다.
-
-- **같은 앱이 현재 Space에 없으면** -- 자동 Space 전환 후 정확한 창 활성화
-- **같은 앱이 현재 Space에 있으면** -- 키보드 시뮬레이션(Ctrl+숫자)으로 타겟 Space 직접 이동
-- **CGWindowID 기반 매칭** -- 같은 앱의 다른 탭이 아닌, 저장한 정확한 창을 식별
+저장한 창이 다른 데스크톱에 있어도 자동으로 감지하고, 해당 데스크톱으로 바로 이동합니다. 같은 앱의 다른 탭이 열려 있어도 저장한 정확한 창을 찾아 올립니다.
 
 ### Raycast-style Search
 
