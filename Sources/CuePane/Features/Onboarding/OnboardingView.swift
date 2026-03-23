@@ -67,6 +67,18 @@ struct OnboardingView: View {
                     body: "⌘⇧Space로 검색창을 열고 이름을 치면 문맥 전체, 창만, 현재 디스플레이로 가져오기를 바로 실행할 수 있습니다.",
                     accent: CuePaneChrome.mint
                 )
+                onboardingCard(
+                    index: "4",
+                    title: "데스크톱 전환 단축키 (선택)",
+                    body: "다른 데스크톱의 앵커를 복원하려면 시스템 설정 > 키보드 > 키보드 단축키 > Mission Control에서 \"데스크탑 X로 전환\" 단축키를 켜주세요.",
+                    accent: Color.purple
+                )
+
+                Button("Mission Control 단축키 설정 열기") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?shortcutsTab")!)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
     }

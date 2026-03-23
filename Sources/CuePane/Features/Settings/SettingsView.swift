@@ -62,6 +62,20 @@ struct SettingsView: View {
                     CheckForUpdatesView(updater: updater)
                 }
 
+                Section("Cross-Space 전환") {
+                    Text("다른 데스크톱의 앵커를 복원하려면 Mission Control 단축키가 필요합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button("Mission Control 단축키 설정 열기") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?shortcutsTab")!)
+                    }
+
+                    Text("시스템 설정 > 키보드 > 키보드 단축키 > Mission Control에서\n\"데스크탑 1로 전환\", \"데스크탑 2로 전환\" 등을 활성화하세요.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
                 Section("제외 앱") {
                     Text("문맥 저장과 검색에서 제외할 번들 ID를 한 줄에 하나씩 입력합니다.")
                         .font(.caption)
