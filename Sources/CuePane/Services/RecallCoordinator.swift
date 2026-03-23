@@ -7,7 +7,7 @@ final class RecallCoordinator {
         self.windowCatalog = windowCatalog
     }
 
-    func presentation(for record: AnchorRecord, topology: DisplayTopology, excludedBundleIDs: Set<String>) -> AnchorPresentation {
+    func presentation(for record: AnchorRecord, topology: DisplayTopology, excludedBundleIDs: Set<String>, cachedSystemWindows: [WindowCatalogService.CrossSpaceWindow]? = nil) -> AnchorPresentation {
         // 최소화/Stage Manager 창도 포함하여 검색
         let liveWindows = windowCatalog.fetchWindowsIncludingHidden(topology: topology, excludedBundleIDs: excludedBundleIDs)
         let matches = matchSnapshots(for: record, in: liveWindows)
@@ -15,7 +15,7 @@ final class RecallCoordinator {
         var crossSpaceDetected = false
 
         if !anchorLive {
-            let systemWindows = windowCatalog.allSystemWindows(excludedBundleIDs: excludedBundleIDs)
+            let systemWindows = cachedSystemWindows ?? windowCatalog.allSystemWindows(excludedBundleIDs: excludedBundleIDs)
             let savedWID = record.anchorWindow.windowNumber
             let crossSpaceHit: Bool
             if let savedWID, savedWID != 0 {

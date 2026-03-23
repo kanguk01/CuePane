@@ -589,12 +589,14 @@ final class AppModel: ObservableObject {
             excludedBundleIDs: preferences.excludedBundleIDSet,
             scope: .visibleOnly
         ).count
+        let systemWindows = windowCatalog.allSystemWindows(excludedBundleIDs: preferences.excludedBundleIDSet)
         presentations = sortedPresentations(
             anchors.map {
                 recallCoordinator.presentation(
                     for: $0,
                     topology: topology,
-                    excludedBundleIDs: preferences.excludedBundleIDSet
+                    excludedBundleIDs: preferences.excludedBundleIDSet,
+                    cachedSystemWindows: systemWindows
                 )
             }
         )
