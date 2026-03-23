@@ -48,6 +48,13 @@ struct NameWindowView: View {
         .padding(16)
         .background(.ultraThinMaterial)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .bottom) {
+            if let toast = appModel.toastMessage {
+                CuePaneToast(message: toast)
+                    .padding(.bottom, 16)
+                    .animation(.spring(duration: 0.3), value: appModel.toastMessage)
+            }
+        }
         .onExitCommand {
             appModel.dismissNaming()
         }

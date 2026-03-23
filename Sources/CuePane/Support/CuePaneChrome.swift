@@ -77,3 +77,17 @@ struct CuePaneShortcutBadge: View {
             .foregroundStyle(.secondary)
     }
 }
+
+struct CuePaneToast: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.1), radius: 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}

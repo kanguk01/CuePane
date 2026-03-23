@@ -263,6 +263,8 @@ struct CuePanePreferences: Codable, Hashable {
         ].joined(separator: "\n")
     )
 
+    var anchorExpirationDays: Int = 0
+
     var excludedBundleIDSet: Set<String> {
         Set(
             excludedBundleIdentifiers

@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var anchors: [AnchorRecord] = []
     @Published private(set) var presentations: [AnchorPresentation] = []
     @Published private(set) var lastActionSummary = "저장된 앵커가 없습니다"
+    @Published private(set) var toastMessage: String?
     @Published var searchQuery = ""
     @Published var namingDraft = ""
     @Published private(set) var namingTargetDescription = ""
@@ -92,6 +93,15 @@ final class AppModel: ObservableObject {
         didStart = true
         refreshAccessibility(prompt: false)
         refreshCatalogSnapshot()
+
+        if preferences.anchorExpirationDays > 0,
+           let cutoff = Calendar.current.date(byAdding: .day, value: -preferences.anchorExpirationDays, to: Date()) {
+            let filtered = anchors.filter { $0.updatedAt > cutoff }
+            if filtered.count < anchors.count {
+                _ = commitAnchors(filtered)
+            }
+        }
+
         registerWorkspaceObservers()
         hotKeyManager.onAction = { [weak self] action, focusedPID, focusedWindowElement in
             guard let self else {
@@ -360,6 +370,7 @@ final class AppModel: ObservableObject {
                 return
             }
             lastActionSummary = "\(trimmedName) · 앵커 이름을 수정했습니다"
+            showToast("\(trimmedName) 저장됨")
             dismissNaming()
             return
         }
@@ -392,6 +403,7 @@ final class AppModel: ObservableObject {
             return
         }
         lastActionSummary = "\(trimmedName) · 같은 모니터 \(finalRecord.totalWindowCount)개 창 저장"
+        showToast("\(trimmedName) 저장됨")
         dismissNaming()
     }
 
@@ -428,6 +440,7 @@ final class AppModel: ObservableObject {
                 _ = commitAnchors(updatedAnchors)
             }
             lastActionSummary = "\(record.name) · 다른 데스크톱으로 전환"
+            showToast("\(record.name) · Space 전환")
 
             // CuePane 창을 닫고 백그라운드에서 Space 전환 수행
             dismissSearch()
@@ -464,6 +477,7 @@ final class AppModel: ObservableObject {
         }
         lastActionSummary = result.summary
         if result.raisedCount > 0 {
+            showToast("\(record.name) 복원됨")
             dismissSearch()
         }
     }
@@ -523,6 +537,7 @@ final class AppModel: ObservableObject {
         lastActionSummary = isFavorite
             ? "\(record.name) · 즐겨찾기에 고정했습니다"
             : "\(record.name) · 즐겨찾기에서 해제했습니다"
+        showToast(isFavorite ? "즐겨찾기 추가" : "즐겨찾기 해제")
     }
 
     func delete(_ record: AnchorRecord) {
@@ -531,6 +546,7 @@ final class AppModel: ObservableObject {
             return
         }
         lastActionSummary = "\(record.name) 앵커를 삭제했습니다"
+        showToast("\(record.name) 삭제됨")
     }
 
     func exportAnchors() {
@@ -570,6 +586,14 @@ final class AppModel: ObservableObject {
             lastActionSummary = "앵커 \(mergeResult.mergedCount)개를 가져왔습니다"
         } catch {
             lastActionSummary = "가져오기 실패: \(error.localizedDescription)"
+        }
+    }
+
+    func showToast(_ message: String) {
+        toastMessage = message
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if toastMessage == message { toastMessage = nil }
         }
     }
 
